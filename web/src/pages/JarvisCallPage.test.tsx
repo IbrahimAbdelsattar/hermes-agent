@@ -128,4 +128,34 @@ describe("JarvisCallPage", () => {
 
     expect(container.textContent).toContain("LIVE WORLD FEED");
   });
+
+  it("renders Voice Cadence and Anti-Interruption Shield controls", async () => {
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={["/jarvis?tab=call"]}>
+          <JarvisCallPage />
+        </MemoryRouter>
+      );
+    });
+
+    expect(container.textContent).toContain("Voice Cadence & Shield:");
+    expect(container.textContent).toContain("Hands-Free (Smart Pauses)");
+    expect(container.textContent).toContain("Push-to-Talk (Zero Cutoffs)");
+    expect(container.textContent).toContain("Relaxed (3.0s)");
+    expect(container.textContent).toContain("Balanced (2.2s)");
+    expect(container.textContent).toContain("Anti-Interruption Shield: Active");
+
+    // Toggle to push-to-talk mode
+    const pttButton = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Push-to-Talk (Zero Cutoffs)")
+    );
+    expect(pttButton).toBeDefined();
+
+    await act(async () => {
+      pttButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    // In push-to-talk mode, pause tolerance pills are hidden
+    expect(container.textContent).not.toContain("Relaxed (3.0s)");
+  });
 });

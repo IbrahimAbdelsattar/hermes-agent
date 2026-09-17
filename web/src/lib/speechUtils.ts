@@ -66,26 +66,18 @@ export const pickArabicVoice = (
   const egVoice = arabicVoices.find((v) => v.lang.toLowerCase().includes('ar-eg'));
   if (egVoice) return egVoice;
 
-  // Persona matching (male for jarvis, female for gwen)
+  // Persona matching (local female browser voice removed in favor of ElevenLabs API)
   if (persona === 'gwen') {
-    const femaleVoice = arabicVoices.find(
-      (v) =>
-        v.name.toLowerCase().includes('female') ||
-        v.name.toLowerCase().includes('salma') ||
-        v.name.toLowerCase().includes('hoda') ||
-        v.name.toLowerCase().includes('laila')
-    );
-    if (femaleVoice) return femaleVoice;
-  } else {
-    const maleVoice = arabicVoices.find(
-      (v) =>
-        v.name.toLowerCase().includes('male') ||
-        v.name.toLowerCase().includes('shakir') ||
-        v.name.toLowerCase().includes('tarik') ||
-        v.name.toLowerCase().includes('maged')
-    );
-    if (maleVoice) return maleVoice;
+    return undefined;
   }
+  const maleVoice = arabicVoices.find(
+    (v) =>
+      v.name.toLowerCase().includes('male') ||
+      v.name.toLowerCase().includes('shakir') ||
+      v.name.toLowerCase().includes('tarik') ||
+      v.name.toLowerCase().includes('maged')
+  );
+  if (maleVoice) return maleVoice;
 
   return arabicVoices[0];
 };
@@ -94,21 +86,14 @@ export const pickEnglishVoice = (
   voices: SpeechSynthesisVoice[],
   persona?: 'jarvis' | 'gwen'
 ): SpeechSynthesisVoice | undefined => {
+  // Local female browser voice removed in favor of ElevenLabs API
+  if (persona === 'gwen') {
+    return undefined;
+  }
   const englishVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
   if (englishVoices.length === 0) return undefined;
 
-  if (persona === 'gwen') {
-    const female = englishVoices.find(
-      (v) =>
-        v.name.toLowerCase().includes('female') ||
-        v.name.toLowerCase().includes('zira') ||
-        v.name.toLowerCase().includes('jenny') ||
-        v.name.toLowerCase().includes('samantha') ||
-        v.name.toLowerCase().includes('victoria')
-    );
-    if (female) return female;
-  } else {
-    // Jarvis British / sophisticated male voice
+  // Jarvis British / sophisticated male voice
     const britishMale = englishVoices.find(
       (v) =>
         (v.lang.toLowerCase().includes('gb') || v.lang.toLowerCase().includes('uk')) &&
@@ -127,7 +112,6 @@ export const pickEnglishVoice = (
         v.name.toLowerCase().includes('natural')
     );
     if (naturalMale) return naturalMale;
-  }
 
   return englishVoices[0];
 };

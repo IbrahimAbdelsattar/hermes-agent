@@ -292,12 +292,25 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
 
+    provider = payload.provider
+    voice_id = payload.voice_id
+    model_id = payload.model_id
+
+    # For Gwen female voice persona: use ElevenLabs free multilingual model and female voice
+    if (payload.persona or "").lower() == "gwen" or (voice_id or "").lower() == "gwen":
+        provider = "elevenlabs"
+        voice_id = "EXAVITQu4vr4xnSDxMaL" if (not voice_id or voice_id.lower() == "gwen") else voice_id
+        model_id = model_id or "eleven_multilingual_v2"
+
     # _config_profile_scope raises 400/404 for a bad profile — pass it
     # through instead of masking it as a 500 synthesis failure.
     with http_failure("Desktop voice TTS failed", 500, "Speech synthesis failed"):
         from tools.tts_tool import text_to_speech_tool
 
-        result_json = await _run_config_scoped(profile, lambda: text_to_speech_tool(text))
+        result_json = await _run_config_scoped(
+            profile,
+            lambda: text_to_speech_tool(text, provider=provider, voice=voice_id, model=model_id),
+        )
 
     try:
         result = json.loads(result_json) if isinstance(result_json, str) else result_json
