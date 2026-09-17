@@ -131,16 +131,53 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     [replaceMessages]
   );
 
+  const rearmTimerRef = useRef<any>(null);
+
   const stopSpeaking = useCallback(() => {
     if (audioRef.current) {
-      audioRef.current.pause();
+      try {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      } catch {
+        // ignore
+      }
       audioRef.current = null;
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // ignore
+      }
     }
     setIsSpeaking(false);
     isSpeakingRef.current = false;
+  }, []);
+
+  const stopRecognition = useCallback(() => {
+    if (rearmTimerRef.current) {
+      clearTimeout(rearmTimerRef.current);
+      rearmTimerRef.current = null;
+    }
+    const rec = recognitionRef.current;
+    if (rec) {
+      try {
+        rec.onstart = null;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        rec.stop();
+      } catch {
+        // ignore
+      }
+      try {
+        rec.abort();
+      } catch {
+        // ignore
+      }
+    }
+    recognitionRef.current = null;
+    recognitionRunningRef.current = false;
   }, []);
 
   const speakWithBrowser = useCallback(
@@ -156,7 +193,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       if (sentences.length === 0) return;
 
       for (const sentence of sentences) {
-        if (statusRef.current !== 'active' || !speakerOnRef.current) break;
+        if (statusRef.current !== 'active' || !speakerOnRef.current || !isSpeakingRef.current) break;
 
         await new Promise<void>((resolve) => {
           const utterance = new SpeechSynthesisUtterance(sentence);
@@ -180,7 +217,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             } else {
               window.speechSynthesis.resume();
             }
-          }, 2000);
+          }, 1500);
 
           window.speechSynthesis.speak(utterance);
         });
@@ -189,185 +226,56 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     [selectedPersona]
   );
 
-  const startRecognition = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (
-      !recognition ||
-      recognitionRunningRef.current ||
-      statusRef.current !== 'active' ||
-      mutedRef.current ||
-      isSpeakingRef.current ||
-      isProcessingRef.current
-    ) {
-      return;
+  const scheduleRearm = useCallback((delayMs = 250) => {
+    if (rearmTimerRef.current) {
+      clearTimeout(rearmTimerRef.current);
     }
-
-    try {
-      const currentLang = languageRef.current;
-      recognition.lang = currentLang === 'English' ? 'en-US' : 'ar-EG';
-      recognition.start();
-    } catch {
-      // Chromium throws if start is called while settling
-    }
+    rearmTimerRef.current = setTimeout(() => {
+      if (
+        statusRef.current === 'active' &&
+        !mutedRef.current &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current
+      ) {
+        startRecognition();
+      }
+    }, delayMs);
   }, []);
 
-  const speak = useCallback(
-    async (rawText: string): Promise<void> => {
-      const text = sanitizeTextForSpeech(rawText);
-      if (!text || !speakerOnRef.current || statusRef.current !== 'active') return;
-
-      stopSpeaking();
-      setIsSpeaking(true);
-      isSpeakingRef.current = true;
-      setMicStatus('Jarvis is speaking...');
-
-      try {
-        const response = await authedFetch('/api/audio/speak', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        }).catch(() => null);
-
-        if (response && response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            ok?: boolean;
-            data_url?: string;
-          } | null;
-
-          if (data?.ok && data.data_url) {
-            const audio = new Audio(data.data_url);
-            audioRef.current = audio;
-            await new Promise<void>((resolve) => {
-              const done = () => {
-                audioRef.current = null;
-                resolve();
-              };
-              audio.onended = done;
-              audio.onerror = done;
-              audio.play().catch(done);
-            });
-            return;
-          }
-        }
-        await speakWithBrowser(text);
-      } catch {
-        await speakWithBrowser(text);
-      } finally {
-        setIsSpeaking(false);
-        isSpeakingRef.current = false;
-        if (statusRef.current === 'active' && !mutedRef.current) {
-          setMicStatus('Listening...');
-          window.setTimeout(startRecognition, 350);
-        }
-      }
-    },
-    [speakWithBrowser, startRecognition, stopSpeaking]
-  );
-
-  const sendChatTurn = useCallback(
-    async (text: string, sessionVersion: number) => {
-      let reply = '';
-      if (onSendMessage) {
-        try {
-          reply = await onSendMessage(text, selectedPersona);
-        } catch (err) {
-          console.warn('[voice] onSendMessage failed, using persona fallback:', err);
-        }
-      }
-      if (!reply) {
-        const isAr = isArabic(text);
-        if (selectedPersona === 'gwen') {
-          reply = isAr
-            ? `أهلاً يا باشا! أنا جوين مع حضرتك. سمعتك بتقول: "${text}". أنا جاهزة لأي أمر أو استفسار!`
-            : `Hello! I am Gwen. I heard you say: "${text}". I'm here and fully synchronized to assist you.`;
-        } else {
-          reply = isAr
-            ? `تحياتي يا فندم! معك جارفيس. استلمت طلبك: "${text}". جاري المعالجة والمتابعة فوراً.`
-            : `Greetings. Jarvis online. I received your request: "${text}". Executing system tasks.`;
-        }
-      }
-
-      if (sessionVersion !== sessionVersionRef.current || statusRef.current !== 'active') return;
-      appendMessage('assistant', reply, selectedPersona);
-      await speak(reply);
-    },
-    [appendMessage, onSendMessage, selectedPersona, speak]
-  );
-
-  const submitTurn = useCallback(
-    async (rawText: string) => {
-      const text = rawText.trim();
-      if (!text || isProcessingRef.current) return;
-      if (statusRef.current !== 'active') {
-        appendMessage('system', 'Please start the call session first by clicking "Start Call".');
-        return;
-      }
-
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = null;
-      }
-      speechAccumulatorRef.current = '';
-
-      stopSpeaking();
-      setInterimTranscript('');
-      const arabic = isArabic(text);
-      setDetectedLanguage(arabic ? 'Arabic' : 'English');
-      appendMessage('user', text);
-
-      setIsProcessing(true);
-      isProcessingRef.current = true;
-      setMicStatus('Jarvis is processing your request...');
-
-      // Pause recognition while awaiting model response
-      if (recognitionRef.current && recognitionRunningRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-
-      const sessionVersion = sessionVersionRef.current;
-      try {
-        await sendChatTurn(text, sessionVersion);
-      } catch (error) {
-        if (sessionVersion === sessionVersionRef.current && statusRef.current === 'active') {
-          const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
-          appendMessage('system', `Could not reach AI voice engine.${detail}`);
-        }
-      } finally {
-        if (sessionVersion === sessionVersionRef.current) {
-          setIsProcessing(false);
-          isProcessingRef.current = false;
-        }
-      }
-    },
-    [appendMessage, sendChatTurn, stopSpeaking]
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+  const createRecognition = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
       setRecognitionStatus('Speech recognition unavailable — use typed input fallback');
-      return;
+      return null;
     }
-    setRecognitionStatus('Browser speech recognition available');
-    const recognition = new SpeechRecognition();
+
+    // Clean up old instance if present
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onstart = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+
+    const recognition = new SpeechRec();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = languageRef.current === 'English' ? 'en-US' : 'ar-EG';
+    const currentLang = languageRef.current;
+    recognition.lang = currentLang === 'English' ? 'en-US' : 'ar-EG';
 
     recognition.onstart = () => {
       recognitionRunningRef.current = true;
-      const currentLang = languageRef.current;
-      setRecognitionStatus(`Listening actively (${currentLang === 'English' ? 'English' : 'Arabic - مصرية'})`);
-    };
-
-    recognition.onspeechstart = () => {
-      if (isSpeakingRef.current) {
-        return;
+      const lang = languageRef.current;
+      setRecognitionStatus(`Listening actively (${lang === 'English' ? 'English' : 'Arabic - مصرية'})`);
+      if (!isSpeakingRef.current && !isProcessingRef.current) {
+        setMicStatus('Listening...');
       }
     };
 
@@ -437,24 +345,198 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         !isSpeakingRef.current &&
         !isProcessingRef.current
       ) {
-        window.setTimeout(startRecognition, 250);
+        scheduleRearm(200);
       }
     };
 
     recognitionRef.current = recognition;
-    return () => {
-      recognition.onend = null;
+    return recognition;
+  }, [scheduleRearm]);
+
+  const startRecognition = useCallback(() => {
+    if (
+      statusRef.current !== 'active' ||
+      mutedRef.current ||
+      isSpeakingRef.current ||
+      isProcessingRef.current
+    ) {
+      return;
+    }
+
+    try {
+      let recognition = recognitionRef.current;
+      if (!recognition || !recognitionRunningRef.current) {
+        recognition = createRecognition();
+      }
+      if (!recognition) return;
+
+      const currentLang = languageRef.current;
+      recognition.lang = currentLang === 'English' ? 'en-US' : 'ar-EG';
+      recognition.start();
+      recognitionRunningRef.current = true;
+    } catch (err: any) {
+      if (err?.name === 'InvalidStateError' || String(err?.message || '').includes('already started')) {
+        recognitionRunningRef.current = true;
+      } else {
+        scheduleRearm(350);
+      }
+    }
+  }, [createRecognition, scheduleRearm]);
+
+  const speak = useCallback(
+    async (rawText: string): Promise<void> => {
+      const text = sanitizeTextForSpeech(rawText);
+      if (!text || !speakerOnRef.current || statusRef.current !== 'active') return;
+
+      stopSpeaking();
+      stopRecognition();
+      setIsSpeaking(true);
+      isSpeakingRef.current = true;
+      setMicStatus('Jarvis is speaking...');
+
+      try {
+        const controller = new AbortController();
+        const abortTimeout = setTimeout(() => controller.abort(), 6500);
+        const response = await authedFetch('/api/audio/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+          signal: controller.signal,
+        }).catch(() => null);
+        clearTimeout(abortTimeout);
+
+        if (response && response.ok) {
+          const data = (await response.json().catch(() => null)) as {
+            ok?: boolean;
+            data_url?: string;
+          } | null;
+
+          if (data?.ok && data.data_url && isSpeakingRef.current) {
+            const audio = new Audio(data.data_url);
+            audioRef.current = audio;
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                audioRef.current = null;
+                resolve();
+              };
+              audio.onended = done;
+              audio.onerror = done;
+              audio.play().catch(done);
+            });
+            return;
+          }
+        }
+        await speakWithBrowser(text);
+      } catch {
+        await speakWithBrowser(text);
+      } finally {
+        setIsSpeaking(false);
+        isSpeakingRef.current = false;
+        if (statusRef.current === 'active' && !mutedRef.current && !isProcessingRef.current) {
+          setMicStatus('Listening...');
+          scheduleRearm(250);
+        }
+      }
+    },
+    [scheduleRearm, speakWithBrowser, stopRecognition, stopSpeaking]
+  );
+
+  const sendChatTurn = useCallback(
+    async (text: string, sessionVersion: number) => {
+      let reply = '';
+      if (onSendMessage) {
+        try {
+          reply = await onSendMessage(text, selectedPersona);
+        } catch (err) {
+          console.warn('[voice] onSendMessage failed, using persona fallback:', err);
+        }
+      }
+      if (!reply) {
+        const isAr = isArabic(text);
+        if (selectedPersona === 'gwen') {
+          reply = isAr
+            ? `أهلاً يا باشا! أنا جوين مع حضرتك. سمعتك بتقول: "${text}". أنا جاهزة لأي أمر أو استفسار!`
+            : `Hello! I am Gwen. I heard you say: "${text}". I'm here and fully synchronized to assist you.`;
+        } else {
+          reply = isAr
+            ? `تحياتي يا فندم! معك جارفيس. استلمت طلبك: "${text}". جاري المعالجة والمتابعة فوراً.`
+            : `Greetings. Jarvis online. I received your request: "${text}". Executing system tasks.`;
+        }
+      }
+
+      if (sessionVersion !== sessionVersionRef.current || statusRef.current !== 'active') return;
+      appendMessage('assistant', reply, selectedPersona);
+      await speak(reply);
+    },
+    [appendMessage, onSendMessage, selectedPersona, speak]
+  );
+
+  const submitTurn = useCallback(
+    async (rawText: string) => {
+      const text = rawText.trim();
+      if (!text || isProcessingRef.current) return;
+      if (statusRef.current !== 'active') {
+        appendMessage('system', 'Please start the call session first by clicking "Start Call".');
+        return;
+      }
+
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
       }
+      speechAccumulatorRef.current = '';
+
+      stopSpeaking();
+      stopRecognition();
+      setInterimTranscript('');
+      const arabic = isArabic(text);
+      setDetectedLanguage(arabic ? 'Arabic' : 'English');
+      appendMessage('user', text);
+
+      setIsProcessing(true);
+      isProcessingRef.current = true;
+      setMicStatus('Jarvis is processing your request...');
+
+      const sessionVersion = sessionVersionRef.current;
       try {
-        recognition.abort();
-      } catch {
-        // Ignore abort errors
+        await sendChatTurn(text, sessionVersion);
+      } catch (error) {
+        if (sessionVersion === sessionVersionRef.current && statusRef.current === 'active') {
+          const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
+          appendMessage('system', `Could not reach AI voice engine.${detail}`);
+        }
+      } finally {
+        if (sessionVersion === sessionVersionRef.current) {
+          setIsProcessing(false);
+          isProcessingRef.current = false;
+          if (statusRef.current === 'active' && !mutedRef.current && !isSpeakingRef.current) {
+            setMicStatus('Listening...');
+            scheduleRearm(250);
+          }
+        }
       }
-      recognitionRef.current = null;
-    };
-  }, [startRecognition, stopSpeaking, submitTurn]);
+    },
+    [appendMessage, scheduleRearm, sendChatTurn, stopRecognition, stopSpeaking]
+  );
+
+  // Recognition Watchdog: Automatically re-arm if active and idling
+  useEffect(() => {
+    if (status !== 'active') return;
+
+    const watchdog = setInterval(() => {
+      if (
+        statusRef.current === 'active' &&
+        !mutedRef.current &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current &&
+        !recognitionRunningRef.current
+      ) {
+        startRecognition();
+      }
+    }, 1500);
+
+    return () => clearInterval(watchdog);
+  }, [status, startRecognition]);
 
   useEffect(() => {
     if (status !== 'active') return;
@@ -513,20 +595,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     setDurationSeconds(0);
     setInterimTranscript('');
     stopSpeaking();
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch {
-        // Ignore
-      }
-    }
+    stopRecognition();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
     setMicStatus('Microphone released');
     appendMessage('system', 'Voice call session terminated.');
-  }, [appendMessage, stopSpeaking]);
+  }, [appendMessage, stopRecognition, stopSpeaking]);
 
   const toggleMicMute = useCallback(() => {
     setIsMuted((prev) => {
@@ -539,19 +615,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       }
       if (next) {
         stopSpeaking();
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.abort();
-          } catch {
-            // Ignore
-          }
-        }
+        stopRecognition();
       } else if (statusRef.current === 'active') {
-        window.setTimeout(startRecognition, 200);
+        scheduleRearm(150);
       }
       return next;
     });
-  }, [startRecognition, stopSpeaking]);
+  }, [scheduleRearm, stopRecognition, stopSpeaking]);
 
   const handleTypedSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -593,13 +663,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               onClick={() => {
                 setSelectedLanguage('Arabic');
                 languageRef.current = 'Arabic';
-                if (recognitionRef.current && recognitionRunningRef.current) {
-                  try {
-                    recognitionRef.current.stop();
-                  } catch {
-                    // ignore
-                  }
-                }
+                stopRecognition();
+                scheduleRearm(150);
               }}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'Arabic'
@@ -613,13 +678,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               onClick={() => {
                 setSelectedLanguage('English');
                 languageRef.current = 'English';
-                if (recognitionRef.current && recognitionRunningRef.current) {
-                  try {
-                    recognitionRef.current.stop();
-                  } catch {
-                    // ignore
-                  }
-                }
+                stopRecognition();
+                scheduleRearm(150);
               }}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'English'
@@ -633,13 +693,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               onClick={() => {
                 setSelectedLanguage('Auto');
                 languageRef.current = 'Auto';
-                if (recognitionRef.current && recognitionRunningRef.current) {
-                  try {
-                    recognitionRef.current.stop();
-                  } catch {
-                    // ignore
-                  }
-                }
+                stopRecognition();
+                scheduleRearm(150);
               }}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'Auto'
@@ -841,6 +896,21 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               {!speakerOn ? <VolumeX className="w-4 h-4 text-amber-400" /> : <Volume2 className="w-4 h-4 text-[#00f0ff]" />}
               {!speakerOn ? 'Speaker Off' : 'Speaker On'}
             </button>
+
+            {isSpeaking && (
+              <button
+                onClick={() => {
+                  stopSpeaking();
+                  if (statusRef.current === 'active' && !mutedRef.current && !isProcessingRef.current) {
+                    setMicStatus('Listening...');
+                    scheduleRearm(100);
+                  }
+                }}
+                className="px-4 py-2.5 bg-amber-500/20 border border-amber-500 text-amber-300 rounded-lg text-xs font-bold flex items-center gap-1.5 animate-pulse shadow-[0_0_12px_rgba(245,158,11,0.3)] hover:bg-amber-500/30 transition-all"
+              >
+                <Radio className="w-4 h-4 text-amber-400" /> Interrupt Speaking
+              </button>
+            )}
           </div>
 
           <div className="text-[11px] font-mono text-[#80f7ff]/60 flex items-center gap-2">

@@ -97,6 +97,7 @@ export default function JarvisCallPage() {
         if (fullText.trim()) {
           resolve(fullText.trim());
         } else {
+          sessionIdRef.current = null;
           reject(new Error("Voice response timed out"));
         }
       }, 45000);
@@ -110,13 +111,20 @@ export default function JarvisCallPage() {
       const offComplete = gw.on("message.complete", (ev) => {
         if (ev.session_id === sid) {
           cleanup();
-          resolve(fullText.trim() || (persona === "gwen" ? "Done!" : "Completed."));
+          const finalReply = fullText.trim() || String(ev.payload?.text || '').trim();
+          resolve(
+            finalReply ||
+              (persona === "gwen"
+                ? "تمام يا باشا، كل شيء جاهز وتحت السيطرة!"
+                : "Understood, sir. Systems operational and standing by.")
+          );
         }
       });
 
       const offError = gw.on("error", (ev) => {
         if (ev.session_id === sid) {
           cleanup();
+          sessionIdRef.current = null;
           reject(new Error("Agent error received"));
         }
       });
@@ -130,11 +138,12 @@ export default function JarvisCallPage() {
 
       const isAr = /[\u0600-\u06FF]/.test(text);
       const personaInstruction = isAr
-        ? `[تعليمات المكالمة الصوتية: أنت في مكالمة صوتية حية مباشرة. رد في جملة أو جملتين قصيرتين فقط وبلهجة مصرية مهذبة وذكية كشخصية ${persona === 'gwen' ? 'جوين' : 'جارفيس'}. لا تستخدم أي قوائم نقطية أو ماركداون.] `
-        : `[VOICE CALL MODE: Live hands-free call. Respond in 1 or 2 concise, spoken-style sentences as ${persona === 'gwen' ? 'Gwen' : 'Jarvis'}. No markdown, no bullet lists.] `;
+        ? `[تعليمات المكالمة الصوتية الحية: أنت في محادثة صوتية تفاعلية. أجب بإيجاز شديد في جملة أو جملتين فقط بلهجة مصرية مهذبة كشخصية ${persona === 'gwen' ? 'جوين' : 'جارفيس'}. ممنوع تماماً استخدام أي ماركداون أو رموز أو قوائم.] `
+        : `[VOICE CALL MODE: Interactive voice call. Respond concisely in 1-2 spoken sentences only as ${persona === 'gwen' ? 'Gwen' : 'Jarvis'}. Absolutely no markdown, no symbols, no bullet lists.] `;
 
       gw.request("prompt.submit", { session_id: sid, text: `${personaInstruction}${text}` }).catch((err) => {
         cleanup();
+        sessionIdRef.current = null;
         reject(err);
       });
     });
