@@ -15,11 +15,19 @@ import {
 } from 'lucide-react';
 import { authedFetch } from '@/lib/api';
 import { AudioWaveformVisualizer } from './AudioWaveformVisualizer';
-import { getVoicesSafely, isArabic, pickArabicVoice, sanitizeTextForSpeech } from '../lib/speechUtils';
+import {
+  getVoicesSafely,
+  isArabic,
+  pickArabicVoice,
+  pickEnglishVoice,
+  sanitizeTextForSpeech,
+  splitTextIntoSentences,
+} from '../lib/speechUtils';
 
 type CallStatus = 'idle' | 'starting' | 'active';
 type Speaker = 'user' | 'assistant' | 'system';
 export type VoicePersona = 'jarvis' | 'gwen';
+export type CallLanguage = 'Arabic' | 'English' | 'Auto';
 
 interface CallMessage {
   id: string;
@@ -44,6 +52,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 }) => {
   const [status, setStatus] = useState<CallStatus>('idle');
   const [selectedPersona, setSelectedPersona] = useState<VoicePersona>(initialPersona);
+  const [selectedLanguage, setSelectedLanguage] = useState<CallLanguage>('Arabic');
   const [isMuted, setIsMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -52,7 +61,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const [interimTranscript, setInterimTranscript] = useState('');
   const [micStatus, setMicStatus] = useState('Microphone standby');
   const [recognitionStatus, setRecognitionStatus] = useState('Speech engine ready');
-  const [detectedLanguage, setDetectedLanguage] = useState<'English' | 'Arabic'>('English');
+  const [detectedLanguage, setDetectedLanguage] = useState<'English' | 'Arabic'>('Arabic');
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [messages, setMessages] = useState<CallMessage[]>([
     {
@@ -73,6 +82,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const sessionVersionRef = useRef(0);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
+  const languageRef = useRef<CallLanguage>('Arabic');
+  const isSpeakingRef = useRef(false);
+  const isProcessingRef = useRef(false);
+  const speakerOnRef = useRef(speakerOn);
+  const silenceTimerRef = useRef<any>(null);
+  const speechAccumulatorRef = useRef<string>('');
+
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
@@ -84,6 +100,22 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   useEffect(() => {
     mutedRef.current = isMuted;
   }, [isMuted]);
+
+  useEffect(() => {
+    languageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
+
+  useEffect(() => {
+    speakerOnRef.current = speakerOn;
+  }, [speakerOn]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
 
   const replaceMessages = useCallback((next: CallMessage[]) => {
     messagesRef.current = next;
@@ -108,36 +140,88 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       window.speechSynthesis.cancel();
     }
     setIsSpeaking(false);
+    isSpeakingRef.current = false;
   }, []);
 
-  const speakWithBrowser = useCallback(async (text: string): Promise<void> => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    const arabic = isArabic(text);
-    utterance.lang = arabic ? 'ar-EG' : 'en-US';
-    
-    if (arabic) {
+  const speakWithBrowser = useCallback(
+    async (text: string): Promise<void> => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      const arabic = isArabic(text);
       const voices = await getVoicesSafely();
-      const voice = pickArabicVoice(voices);
-      if (voice) utterance.voice = voice;
+      const voice = arabic
+        ? pickArabicVoice(voices, selectedPersona)
+        : pickEnglishVoice(voices, selectedPersona);
+
+      const sentences = splitTextIntoSentences(text);
+      if (sentences.length === 0) return;
+
+      for (const sentence of sentences) {
+        if (statusRef.current !== 'active' || !speakerOnRef.current) break;
+
+        await new Promise<void>((resolve) => {
+          const utterance = new SpeechSynthesisUtterance(sentence);
+          utterance.lang = arabic ? 'ar-EG' : 'en-US';
+          utterance.rate = arabic ? 1.0 : selectedPersona === 'gwen' ? 1.05 : 1.02;
+          utterance.pitch = selectedPersona === 'gwen' ? 1.05 : 0.94;
+          if (voice) utterance.voice = voice;
+
+          let keepAliveTimer: any = null;
+          const cleanup = () => {
+            if (keepAliveTimer) clearInterval(keepAliveTimer);
+            resolve();
+          };
+
+          utterance.onend = cleanup;
+          utterance.onerror = cleanup;
+
+          keepAliveTimer = setInterval(() => {
+            if (!window.speechSynthesis.speaking) {
+              clearInterval(keepAliveTimer);
+            } else {
+              window.speechSynthesis.resume();
+            }
+          }, 2000);
+
+          window.speechSynthesis.speak(utterance);
+        });
+      }
+    },
+    [selectedPersona]
+  );
+
+  const startRecognition = useCallback(() => {
+    const recognition = recognitionRef.current;
+    if (
+      !recognition ||
+      recognitionRunningRef.current ||
+      statusRef.current !== 'active' ||
+      mutedRef.current ||
+      isSpeakingRef.current ||
+      isProcessingRef.current
+    ) {
+      return;
     }
-    
-    await new Promise<void>((resolve) => {
-      const done = () => resolve();
-      utterance.onend = done;
-      utterance.onerror = done;
-      window.speechSynthesis.speak(utterance);
-    });
+
+    try {
+      const currentLang = languageRef.current;
+      recognition.lang = currentLang === 'English' ? 'en-US' : 'ar-EG';
+      recognition.start();
+    } catch {
+      // Chromium throws if start is called while settling
+    }
   }, []);
 
   const speak = useCallback(
     async (rawText: string): Promise<void> => {
       const text = sanitizeTextForSpeech(rawText);
-      if (!text || !speakerOn || statusRef.current !== 'active') return;
+      if (!text || !speakerOnRef.current || statusRef.current !== 'active') return;
+
       stopSpeaking();
       setIsSpeaking(true);
+      isSpeakingRef.current = true;
+      setMicStatus('Jarvis is speaking...');
+
       try {
-        // Try calling Hermes Agent /api/audio/speak endpoint first if available
         const response = await authedFetch('/api/audio/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -170,9 +254,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         await speakWithBrowser(text);
       } finally {
         setIsSpeaking(false);
+        isSpeakingRef.current = false;
+        if (statusRef.current === 'active' && !mutedRef.current) {
+          setMicStatus('Listening...');
+          window.setTimeout(startRecognition, 350);
+        }
       }
     },
-    [speakerOn, speakWithBrowser, stopSpeaking]
+    [speakWithBrowser, startRecognition, stopSpeaking]
   );
 
   const sendChatTurn = useCallback(
@@ -186,7 +275,6 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         }
       }
       if (!reply) {
-        // Default local response generator fallback
         const isAr = isArabic(text);
         if (selectedPersona === 'gwen') {
           reply = isAr
@@ -194,7 +282,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             : `Hello! I am Gwen. I heard you say: "${text}". I'm here and fully synchronized to assist you.`;
         } else {
           reply = isAr
-            ? `تحياتي يا هندسة! معك جارفيس. استلمت طلبك: "${text}". جاري المعالجة والمتابعة فوراً.`
+            ? `تحياتي يا فندم! معك جارفيس. استلمت طلبك: "${text}". جاري المعالجة والمتابعة فوراً.`
             : `Greetings. Jarvis online. I received your request: "${text}". Executing system tasks.`;
         }
       }
@@ -209,11 +297,18 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const submitTurn = useCallback(
     async (rawText: string) => {
       const text = rawText.trim();
-      if (!text || isProcessing) return;
+      if (!text || isProcessingRef.current) return;
       if (statusRef.current !== 'active') {
         appendMessage('system', 'Please start the call session first by clicking "Start Call".');
         return;
       }
+
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      speechAccumulatorRef.current = '';
+
       stopSpeaking();
       setInterimTranscript('');
       const arabic = isArabic(text);
@@ -221,6 +316,18 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       appendMessage('user', text);
 
       setIsProcessing(true);
+      isProcessingRef.current = true;
+      setMicStatus('Jarvis is processing your request...');
+
+      // Pause recognition while awaiting model response
+      if (recognitionRef.current && recognitionRunningRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+
       const sessionVersion = sessionVersionRef.current;
       try {
         await sendChatTurn(text, sessionVersion);
@@ -230,21 +337,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           appendMessage('system', `Could not reach AI voice engine.${detail}`);
         }
       } finally {
-        if (sessionVersion === sessionVersionRef.current) setIsProcessing(false);
+        if (sessionVersion === sessionVersionRef.current) {
+          setIsProcessing(false);
+          isProcessingRef.current = false;
+        }
       }
     },
-    [appendMessage, isProcessing, sendChatTurn, stopSpeaking]
+    [appendMessage, sendChatTurn, stopSpeaking]
   );
-
-  const startRecognition = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition || recognitionRunningRef.current || statusRef.current !== 'active' || mutedRef.current) return;
-    try {
-      recognition.start();
-    } catch {
-      // Chromium throws if start is called while a previous stop is settling.
-    }
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -257,43 +357,96 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    recognition.lang = languageRef.current === 'English' ? 'en-US' : 'ar-EG';
 
     recognition.onstart = () => {
       recognitionRunningRef.current = true;
-      setRecognitionStatus('Listening (Auto Arabic / English speech detection)');
+      const currentLang = languageRef.current;
+      setRecognitionStatus(`Listening actively (${currentLang === 'English' ? 'English' : 'Arabic - مصرية'})`);
     };
-    recognition.onspeechstart = () => stopSpeaking();
+
+    recognition.onspeechstart = () => {
+      if (isSpeakingRef.current) {
+        return;
+      }
+    };
+
     recognition.onresult = (event: any) => {
-      let finalText = '';
-      let interimText = '';
+      if (isSpeakingRef.current || isProcessingRef.current) {
+        return;
+      }
+
+      let capturedChunks = '';
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const chunk = String(event.results[index][0]?.transcript || '').trim();
-        if (event.results[index].isFinal) finalText += ` ${chunk}`;
-        else interimText += ` ${chunk}`;
+        if (event.results[index].isFinal) {
+          speechAccumulatorRef.current = speechAccumulatorRef.current
+            ? `${speechAccumulatorRef.current} ${chunk}`
+            : chunk;
+        } else {
+          capturedChunks = capturedChunks ? `${capturedChunks} ${chunk}` : chunk;
+        }
       }
-      setInterimTranscript(interimText.trim());
-      if (finalText.trim()) {
-        const final = finalText.trim();
-        recognition.lang = isArabic(final) ? 'ar-EG' : 'en-US';
-        void submitTurn(final);
-        recognition.stop();
+
+      const currentDraft = (
+        speechAccumulatorRef.current + (capturedChunks ? ` ${capturedChunks}` : '')
+      ).trim();
+
+      if (currentDraft) {
+        setInterimTranscript(currentDraft);
+        setMicStatus(`Listening: "${currentDraft.slice(-45)}"`);
+
+        // Debounced silence detection: wait 1400ms after user pauses before submitting
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+        }
+
+        silenceTimerRef.current = setTimeout(() => {
+          const finalSpokenText = (
+            speechAccumulatorRef.current || currentDraft
+          ).trim();
+
+          if (
+            finalSpokenText &&
+            statusRef.current === 'active' &&
+            !isProcessingRef.current &&
+            !isSpeakingRef.current
+          ) {
+            speechAccumulatorRef.current = '';
+            setInterimTranscript('');
+            setMicStatus('Processing speech turn...');
+            void submitTurn(finalSpokenText);
+          }
+        }, 1400);
       }
     };
+
     recognition.onerror = (event: any) => {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         setRecognitionStatus('Microphone permission denied — typed input active');
       } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
-        setRecognitionStatus(`Speech recognition error: ${event.error || 'unknown'}`);
+        setRecognitionStatus(`Speech recognition note: ${event.error || 'unknown'}`);
       }
     };
+
     recognition.onend = () => {
       recognitionRunningRef.current = false;
-      if (statusRef.current === 'active' && !mutedRef.current) window.setTimeout(startRecognition, 250);
+      if (
+        statusRef.current === 'active' &&
+        !mutedRef.current &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current
+      ) {
+        window.setTimeout(startRecognition, 250);
+      }
     };
+
     recognitionRef.current = recognition;
     return () => {
       recognition.onend = null;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
       try {
         recognition.abort();
       } catch {
@@ -433,7 +586,71 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Language selector tabs */}
+          <div className="flex bg-[#030712] border border-[#00f0ff]/30 rounded-lg p-1 text-xs">
+            <button
+              onClick={() => {
+                setSelectedLanguage('Arabic');
+                languageRef.current = 'Arabic';
+                if (recognitionRef.current && recognitionRunningRef.current) {
+                  try {
+                    recognitionRef.current.stop();
+                  } catch {
+                    // ignore
+                  }
+                }
+              }}
+              className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                selectedLanguage === 'Arabic'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
+                  : 'text-[#80f7ff]/50 hover:text-[#e5e2e1]'
+              }`}
+            >
+              عربي (EG)
+            </button>
+            <button
+              onClick={() => {
+                setSelectedLanguage('English');
+                languageRef.current = 'English';
+                if (recognitionRef.current && recognitionRunningRef.current) {
+                  try {
+                    recognitionRef.current.stop();
+                  } catch {
+                    // ignore
+                  }
+                }
+              }}
+              className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                selectedLanguage === 'English'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
+                  : 'text-[#80f7ff]/50 hover:text-[#e5e2e1]'
+              }`}
+            >
+              English
+            </button>
+            <button
+              onClick={() => {
+                setSelectedLanguage('Auto');
+                languageRef.current = 'Auto';
+                if (recognitionRef.current && recognitionRunningRef.current) {
+                  try {
+                    recognitionRef.current.stop();
+                  } catch {
+                    // ignore
+                  }
+                }
+              }}
+              className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                selectedLanguage === 'Auto'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
+                  : 'text-[#80f7ff]/50 hover:text-[#e5e2e1]'
+              }`}
+            >
+              Auto
+            </button>
+          </div>
+
           {/* Persona selector tabs */}
           <div className="flex bg-[#030712] border border-[#00f0ff]/30 rounded-lg p-1 text-xs">
             <button

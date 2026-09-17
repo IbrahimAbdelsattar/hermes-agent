@@ -128,7 +128,12 @@ export default function JarvisCallPage() {
         offError();
       }
 
-      gw.request("prompt.submit", { session_id: sid, text }).catch((err) => {
+      const isAr = /[\u0600-\u06FF]/.test(text);
+      const personaInstruction = isAr
+        ? `[تعليمات المكالمة الصوتية: أنت في مكالمة صوتية حية مباشرة. رد في جملة أو جملتين قصيرتين فقط وبلهجة مصرية مهذبة وذكية كشخصية ${persona === 'gwen' ? 'جوين' : 'جارفيس'}. لا تستخدم أي قوائم نقطية أو ماركداون.] `
+        : `[VOICE CALL MODE: Live hands-free call. Respond in 1 or 2 concise, spoken-style sentences as ${persona === 'gwen' ? 'Gwen' : 'Jarvis'}. No markdown, no bullet lists.] `;
+
+      gw.request("prompt.submit", { session_id: sid, text: `${personaInstruction}${text}` }).catch((err) => {
         cleanup();
         reject(err);
       });
