@@ -55,6 +55,8 @@ import {
   Wrench,
   X,
   Zap,
+  Mic,
+  PhoneCall,
 } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { SelectionSwitcher } from "@nous-research/ui/ui/components/selection-switcher";
@@ -96,6 +98,7 @@ const ChannelsPage = lazy(() => import("@/pages/ChannelsPage"));
 const WebhooksPage = lazy(() => import("@/pages/WebhooksPage"));
 const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
+const JarvisCallPage = lazy(() => import("@/pages/JarvisCallPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -173,6 +176,8 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/config": ConfigPage,
   "/env": EnvPage,
   "/docs": DocsPage,
+  "/jarvis-call": JarvisCallPage,
+  "/jarvis": JarvisCallPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
@@ -189,6 +194,11 @@ const BUILTIN_NAV_REST: NavItem[] = [
     labelKey: "sessions",
     label: "Sessions",
     icon: MessageSquare,
+  },
+  {
+    path: "/jarvis-call",
+    label: "Jarvis Call",
+    icon: Mic,
   },
   { path: "/files", label: "Files", icon: FolderOpen },
   {
