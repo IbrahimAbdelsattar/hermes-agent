@@ -348,14 +348,23 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
         }, 1000);
         setIsPlaying(true);
       } else if (audioRef.current) {
-        audioRef.current
-          .play()
-          .then(() => setIsPlaying(true))
-          .catch((err) => {
-            console.warn('Audio play error, falling back to synth:', err);
-            synthRef.current.start(isMuted ? 0 : volume);
+        try {
+          const playPromise = audioRef.current.play();
+          if (playPromise && typeof playPromise.then === 'function') {
+            playPromise
+              .then(() => setIsPlaying(true))
+              .catch((err) => {
+                console.warn('Audio play error, falling back to synth:', err);
+                synthRef.current.start(isMuted ? 0 : volume);
+                setIsPlaying(true);
+              });
+          } else {
             setIsPlaying(true);
-          });
+          }
+        } catch {
+          synthRef.current.start(isMuted ? 0 : volume);
+          setIsPlaying(true);
+        }
       }
     }
   }, [currentTrack, isPlaying, isMuted, volume, isRepeat]);
@@ -525,7 +534,7 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
             <div className="flex items-center gap-2">
               <span className="font-bold text-[#00f0ff] tracking-wide text-sm">JARVIS AUDIO DECK</span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/30 flex items-center gap-1 font-bold">
-                <Sparkles className="size-2.5" /> VOICE-ENABLED
+                <Sparkles className="size-2.5" /> HOLOGRAPHIC & VOICE-ENABLED
               </span>
             </div>
             <p className="text-[11px] text-[#80f7ff]/60">
