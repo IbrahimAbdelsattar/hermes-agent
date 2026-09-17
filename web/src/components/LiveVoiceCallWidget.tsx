@@ -396,7 +396,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         setInterimTranscript(currentDraft);
         setMicStatus(`Listening: "${currentDraft.slice(-45)}"`);
 
-        // Debounced silence detection: wait 1400ms after user pauses before submitting
+        // Debounced silence detection: wait 850ms after user pauses before submitting
         if (silenceTimerRef.current) {
           clearTimeout(silenceTimerRef.current);
         }
@@ -417,7 +417,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             setMicStatus('Processing speech turn...');
             void submitTurn(finalSpokenText);
           }
-        }, 1400);
+        }, 850);
       }
     };
 
