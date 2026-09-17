@@ -13,6 +13,37 @@ import { parseMusicCommand } from "@/utils/musicCommander";
 
 export type JarvisTab = "call" | "core" | "music" | "feed";
 
+function safeGetStorage(key: string): string | null {
+  try {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+      return localStorage.getItem(key);
+    }
+  } catch {
+    // Ignore storage access issues
+  }
+  return null;
+}
+
+function safeSetStorage(key: string, value: string): void {
+  try {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+      localStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore storage access issues
+  }
+}
+
+function safeRemoveStorage(key: string): void {
+  try {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage access issues
+  }
+}
+
 export default function JarvisCallPage() {
   const { setEnd } = usePageHeader();
   const location = useLocation();
@@ -46,13 +77,11 @@ export default function JarvisCallPage() {
   };
 
   const gatewayRef = useRef<GatewayClient | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+  const liveSessionIdRef = useRef<string | null>(null);
+  const storedSessionIdRef = useRef<string | null>(null);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("JARVIS_ACTIVE_SESSION_ID");
-    }
-    return null;
+    return safeGetStorage("JARVIS_ACTIVE_SESSION_ID");
   });
   const [activeSessionTitle, setActiveSessionTitle] = useState<string>("");
   const [callSessions, setCallSessions] = useState<SessionInfo[]>([]);
@@ -91,9 +120,9 @@ export default function JarvisCallPage() {
     };
   }, [setEnd]);
 
-  // Sync ref with state
+  // Sync stored ref with state
   useEffect(() => {
-    sessionIdRef.current = activeSessionId;
+    storedSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
   const refreshCallSessions = useCallback(async () => {
@@ -102,8 +131,9 @@ export default function JarvisCallPage() {
       const res = await api.getSessions(50, 0, undefined, "recent");
       if (res && Array.isArray(res.sessions)) {
         setCallSessions(res.sessions);
-        if (sessionIdRef.current) {
-          const current = res.sessions.find((s) => s.id === sessionIdRef.current);
+        const sid = storedSessionIdRef.current || activeSessionId;
+        if (sid) {
+          const current = res.sessions.find((s) => s.id === sid);
           if (current?.title) {
             setActiveSessionTitle(current.title);
           }
@@ -114,7 +144,7 @@ export default function JarvisCallPage() {
     } finally {
       setIsHistoryLoading(false);
     }
-  }, []);
+  }, [activeSessionId]);
 
   useEffect(() => {
     void refreshCallSessions();
@@ -158,9 +188,10 @@ export default function JarvisCallPage() {
 
   const handleSelectSession = useCallback(
     async (sid: string) => {
-      sessionIdRef.current = sid;
+      storedSessionIdRef.current = sid;
+      liveSessionIdRef.current = null;
       setActiveSessionId(sid);
-      localStorage.setItem("JARVIS_ACTIVE_SESSION_ID", sid);
+      safeSetStorage("JARVIS_ACTIVE_SESSION_ID", sid);
 
       const found = callSessions.find((s) => s.id === sid);
       if (found?.title) {
@@ -173,7 +204,16 @@ export default function JarvisCallPage() {
           await gw.connect();
         }
         try {
-          await gw.request("session.resume", { session_id: sid });
+          const resumed = await gw.request<{ session_id: string; stored_session_id?: string }>(
+            "session.resume",
+            { session_id: sid }
+          );
+          if (resumed?.session_id) {
+            liveSessionIdRef.current = resumed.session_id;
+            if (resumed.stored_session_id) {
+              storedSessionIdRef.current = resumed.stored_session_id;
+            }
+          }
         } catch (err) {
           console.warn("[jarvis] session.resume via gateway deferred:", err);
         }
@@ -211,10 +251,11 @@ export default function JarvisCallPage() {
   );
 
   const handleNewSession = useCallback(() => {
-    sessionIdRef.current = null;
+    liveSessionIdRef.current = null;
+    storedSessionIdRef.current = null;
     setActiveSessionId(null);
     setActiveSessionTitle("");
-    localStorage.removeItem("JARVIS_ACTIVE_SESSION_ID");
+    safeRemoveStorage("JARVIS_ACTIVE_SESSION_ID");
     setInitialMessages([
       {
         id: Math.random().toString(36).substring(2, 9),
@@ -229,7 +270,7 @@ export default function JarvisCallPage() {
     async (sid: string) => {
       try {
         await api.deleteSession(sid);
-        if (sessionIdRef.current === sid) {
+        if (storedSessionIdRef.current === sid || activeSessionId === sid) {
           handleNewSession();
         }
         await refreshCallSessions();
@@ -237,7 +278,7 @@ export default function JarvisCallPage() {
         console.warn("[jarvis] Failed deleting session:", err);
       }
     },
-    [handleNewSession, refreshCallSessions]
+    [activeSessionId, handleNewSession, refreshCallSessions]
   );
 
   useEffect(() => {
@@ -253,6 +294,71 @@ export default function JarvisCallPage() {
     };
   }, []);
 
+  const ensureGatewaySession = useCallback(
+    async (persona: VoicePersona): Promise<{ runtimeSid: string; storedSid: string }> => {
+      const gw = gatewayRef.current;
+      if (!gw) throw new Error("Gateway client not initialized");
+
+      if (gw.connectionState !== "open") {
+        await gw.connect();
+      }
+
+      // Check if existing live session is valid
+      if (liveSessionIdRef.current) {
+        return {
+          runtimeSid: liveSessionIdRef.current,
+          storedSid: storedSessionIdRef.current || liveSessionIdRef.current,
+        };
+      }
+
+      // Try resuming stored session
+      const candidateStored = storedSessionIdRef.current || activeSessionId;
+      if (candidateStored) {
+        try {
+          const resumed = await gw.request<{ session_id: string; stored_session_id?: string }>(
+            "session.resume",
+            { session_id: candidateStored }
+          );
+          if (resumed?.session_id) {
+            const runtimeSid = resumed.session_id;
+            const persistentId = resumed.stored_session_id || candidateStored;
+            liveSessionIdRef.current = runtimeSid;
+            storedSessionIdRef.current = persistentId;
+            setActiveSessionId(persistentId);
+            safeSetStorage("JARVIS_ACTIVE_SESSION_ID", persistentId);
+            return { runtimeSid, storedSid: persistentId };
+          }
+        } catch (err) {
+          console.warn("[jarvis] session.resume failed, creating fresh session:", err);
+        }
+      }
+
+      // Create a fresh session
+      const nowStr = new Date().toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const title = `Jarvis Voice Sentinel (${persona === "gwen" ? "Gwen" : "Jarvis"}) - ${nowStr}`;
+      const created = await gw.request<{ session_id: string; stored_session_id?: string }>(
+        "session.create",
+        { title }
+      );
+      const runtimeSid = created.session_id;
+      const persistentId = created.stored_session_id || runtimeSid;
+      liveSessionIdRef.current = runtimeSid;
+      storedSessionIdRef.current = persistentId;
+      setActiveSessionId(persistentId);
+      setActiveSessionTitle(title);
+      safeSetStorage("JARVIS_ACTIVE_SESSION_ID", persistentId);
+      void refreshCallSessions();
+
+      return { runtimeSid, storedSid: persistentId };
+    },
+    [activeSessionId, refreshCallSessions]
+  );
+
   const handleSendMessage = useCallback(
     async (text: string, persona: VoicePersona = "jarvis"): Promise<string> => {
       const gw = gatewayRef.current;
@@ -260,80 +366,9 @@ export default function JarvisCallPage() {
         throw new Error("Gateway client not initialized");
       }
 
-      if (gw.connectionState !== "open") {
-        await gw.connect();
-      }
-
-      let sid = sessionIdRef.current;
-      if (!sid) {
-        const nowStr = new Date().toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        const title = `Jarvis Voice Sentinel (${persona === "gwen" ? "Gwen" : "Jarvis"}) - ${nowStr}`;
-        const created = await gw.request<{ session_id: string }>("session.create", {
-          title,
-        });
-        sid = created.session_id;
-        sessionIdRef.current = sid;
-        setActiveSessionId(sid);
-        setActiveSessionTitle(title);
-        localStorage.setItem("JARVIS_ACTIVE_SESSION_ID", sid);
-        void refreshCallSessions();
-      }
-
-      return new Promise<string>((resolve, reject) => {
-        let fullText = "";
-        const timeout = setTimeout(() => {
-          cleanup();
-          if (fullText.trim()) {
-            resolve(fullText.trim());
-          } else {
-            sessionIdRef.current = null;
-            setActiveSessionId(null);
-            localStorage.removeItem("JARVIS_ACTIVE_SESSION_ID");
-            reject(new Error("Voice response timed out"));
-          }
-        }, 45000);
-
-        const offDelta = gw.on("message.delta", (ev) => {
-          if (ev.session_id === sid && ev.payload?.text) {
-            fullText += ev.payload.text;
-          }
-        });
-
-        const offComplete = gw.on("message.complete", (ev) => {
-          if (ev.session_id === sid) {
-            cleanup();
-            void refreshCallSessions();
-            const finalReply = fullText.trim() || String(ev.payload?.text || "").trim();
-            resolve(
-              finalReply ||
-                (persona === "gwen"
-                  ? "تمام يا باشا، كل شيء جاهز وتحت السيطرة!"
-                  : "Understood, sir. Systems operational and standing by.")
-            );
-          }
-        });
-
-        const offError = gw.on("error", (ev) => {
-          if (ev.session_id === sid) {
-            cleanup();
-            sessionIdRef.current = null;
-            setActiveSessionId(null);
-            localStorage.removeItem("JARVIS_ACTIVE_SESSION_ID");
-            reject(new Error("Agent error received"));
-          }
-        });
-
-        function cleanup() {
-          clearTimeout(timeout);
-          offDelta();
-          offComplete();
-          offError();
-        }
+      const sessionInfo = await ensureGatewaySession(persona);
+      let currentRuntimeSid = sessionInfo.runtimeSid;
+      const currentStoredSid = sessionInfo.storedSid;
 
       const musicCmd = parseMusicCommand(text);
       if (musicCmd) {
@@ -347,20 +382,98 @@ export default function JarvisCallPage() {
       const isAr = /[\u0600-\u06FF]/.test(text);
       const musicNote = musicCmd ? ` [تم تشغيل الأمر الموسيقي "${musicCmd.action}" في النظام]` : "";
       const personaInstruction = isAr
-        ? `[تعليمات المكالمة الصوتية الحية: أنت في مكالمة صوتية مستمرة ولديك ذاكرة كاملة لجلساتنا السابقة ومشاريعنا المتفق عليها. إذا سأل المستخدم عن مشروع أو أمر تم الاتفاق عليه سابقاً، تذكره فوراً واستحضر تفاصيله واستمر عليه. أجب بإيجاز شديد في جملة أو جملتين فقط بلهجة مصرية مهذبة كشخصية ${persona === 'gwen' ? 'جوين' : 'جارفيس'}.${musicNote} ممنوع تماماً استخدام أي ماركداون أو رموز أو قوائم.] `
-        : `[VOICE CALL MODE: Continuous voice call with persistent memory. You recall all previous agreements, project details, and tasks discussed with the user. If asked about an ongoing project or task, recall it immediately and maintain continuity. Respond concisely in 1-2 spoken sentences only as ${persona === 'gwen' ? 'Gwen' : 'Jarvis'}.${musicNote} Absolutely no markdown, no symbols, no bullet lists.] `;
+        ? `[تعليمات المكالمة الصوتية الحية: أنت في مكالمة صوتية مستمرة ولديك ذاكرة كاملة لجلساتنا السابقة ومشاريعنا المتفق عليها. إذا سأل المستخدم عن مشروع أو أمر تم الاتفاق عليه سابقاً، تذكره فوراً واستحضر تفاصيله واستمر عليه. لديك مشغل موسيقى حقيقي مدمج في النظام (JARVIS Audio Deck) يشغّل أغاني حمزة نمرة وتراكات أيرون مان وبيلي إيليش. إذا طلب المستخدم تشغيل أي أغنية أو موسيقى، أكد له تشغيلها فوراً كـ ${persona === 'gwen' ? 'جوين' : 'جارفيس'} ولا تقل أبداً أنك لا تستطيع تشغيل الموسيقى. أجب بإيجاز شديد في جملة أو جملتين فقط بلهجة مصرية مهذبة.${musicNote} ممنوع تماماً استخدام أي ماركداون أو رموز أو قوائم.] `
+        : `[VOICE CALL MODE: Continuous voice call with persistent memory. You recall all previous agreements, project details, and tasks discussed with the user. You have a real built-in JARVIS Audio Deck with Iron Man themes, Hamza Namira, and Billie Eilish tracks integrated directly into your system. If the user asks to play music, a song, or a soundtrack, enthusiastically confirm playback immediately as ${persona === 'gwen' ? 'Gwen' : 'Jarvis'} and NEVER claim you cannot play audio or stream music. Respond concisely in 1-2 spoken sentences only.${musicNote} Absolutely no markdown, no symbols, no bullet lists.] `;
 
-      gw.request("prompt.submit", { session_id: sid, text: `${personaInstruction}${text}` }).catch((err) => {
-        cleanup();
-        sessionIdRef.current = null;
-        setActiveSessionId(null);
-        localStorage.removeItem("JARVIS_ACTIVE_SESSION_ID");
-        reject(err);
+      return new Promise<string>((resolve, reject) => {
+        let fullText = "";
+        let settled = false;
+
+        const cleanup = () => {
+          settled = true;
+          clearTimeout(timeout);
+          offDelta();
+          offComplete();
+          offError();
+        };
+
+        const timeout = setTimeout(() => {
+          if (settled) return;
+          cleanup();
+          if (fullText.trim()) {
+            resolve(fullText.trim());
+          } else {
+            reject(new Error("Voice response timed out"));
+          }
+        }, 45000);
+
+        const matchSession = (evSid?: string) => {
+          if (!evSid) return true;
+          return evSid === currentRuntimeSid || evSid === currentStoredSid;
+        };
+
+        const offDelta = gw.on("message.delta", (ev) => {
+          if (matchSession(ev.session_id) && ev.payload?.text) {
+            fullText += ev.payload.text;
+          }
+        });
+
+        const offComplete = gw.on("message.complete", (ev) => {
+          if (matchSession(ev.session_id)) {
+            cleanup();
+            void refreshCallSessions();
+            const finalReply = fullText.trim() || String(ev.payload?.text || "").trim();
+            resolve(
+              finalReply ||
+                (persona === "gwen"
+                  ? "تمام يا باشا، كل شيء جاهز وتحت السيطرة!"
+                  : "Understood, sir. Systems operational and standing by.")
+            );
+          }
+        });
+
+        const offError = gw.on("error", (ev) => {
+          if (matchSession(ev.session_id)) {
+            cleanup();
+            reject(new Error(String(ev.payload?.message || "Agent error received")));
+          }
+        });
+
+        const submitPrompt = (sidToSubmit: string) => {
+          gw.request("prompt.submit", { session_id: sidToSubmit, text: `${personaInstruction}${text}` }).catch(
+            async (err) => {
+              if (settled) return;
+              console.warn("[jarvis] prompt.submit error, checking recovery:", err);
+              if (
+                String(err).includes("session not found") ||
+                (err && (err as any).code === 4001)
+              ) {
+                liveSessionIdRef.current = null;
+                try {
+                  const fresh = await ensureGatewaySession(persona);
+                  currentRuntimeSid = fresh.runtimeSid;
+                  await gw.request("prompt.submit", {
+                    session_id: currentRuntimeSid,
+                    text: `${personaInstruction}${text}`,
+                  });
+                  return;
+                } catch (retryErr) {
+                  cleanup();
+                  reject(retryErr);
+                  return;
+                }
+              }
+              cleanup();
+              reject(err);
+            }
+          );
+        };
+
+        submitPrompt(currentRuntimeSid);
       });
-    });
-  },
-  [refreshCallSessions]
-);
+    },
+    [ensureGatewaySession, refreshCallSessions]
+  );
 
 return (
   <div

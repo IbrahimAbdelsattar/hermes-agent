@@ -35,6 +35,7 @@ data/
 # Bundled community plugin index seed (shipped as package data) — the bare
 # `data/` pattern above would otherwise swallow it.
 !hermes_cli/data/
+!web/src/data/
 .pytest_cache/
 test_durations.json
 .pytest-cache/
@@ -305,3 +306,4 @@ native/fts5_cjk/*.so
 # Graphify knowledge-graph cache (scripts/graphify_knowledge.py build).
 # Regenerable static index; never an artifact of the repo.
 .graphify/
+scratch/

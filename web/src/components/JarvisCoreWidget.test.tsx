@@ -32,6 +32,7 @@ describe("JarvisCoreWidget", () => {
     expect(container.textContent).toContain("FOCUS GOAL");
     expect(container.textContent).toContain("DEEP WORK");
     expect(container.textContent).toContain("COMMANDS:");
+    expect(container.textContent).toContain("Eng. Ibrahim Abdelsattar");
   });
 
   it("switches to topology view", async () => {
@@ -50,6 +51,44 @@ describe("JarvisCoreWidget", () => {
 
     expect(container.textContent).toContain("HOLOGRAPHIC NEURAL TOPOLOGY");
     expect(container.textContent).toContain("7 NODES ACTIVE");
+  });
+
+  it("switches to projects and code inspector view", async () => {
+    await act(async () => {
+      root.render(<JarvisCoreWidget />);
+    });
+
+    const projectsBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Projects & Code")
+    );
+    expect(projectsBtn).toBeDefined();
+
+    await act(async () => {
+      projectsBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("GITHUB PROJECTS (41)");
+    expect(container.textContent).toContain("Source Code Inspector");
+    expect(container.textContent).toContain("hermes-agent");
+  });
+
+  it("switches to cloud and tasks view", async () => {
+    await act(async () => {
+      root.render(<JarvisCoreWidget />);
+    });
+
+    const cloudBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Cloud & Tasks")
+    );
+    expect(cloudBtn).toBeDefined();
+
+    await act(async () => {
+      cloudBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("HERMES AGENT ORCHESTRATION & TASKS");
+    expect(container.textContent).toContain("GOOGLE CLOUD PLATFORM (GCP)");
+    expect(container.textContent).toContain("Google BigQuery");
   });
 
   it("triggers deep work mode toggle", async () => {

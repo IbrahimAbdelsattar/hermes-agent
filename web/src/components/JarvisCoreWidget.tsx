@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Bot,
   Send,
@@ -17,6 +17,16 @@ import {
   Columns,
   Target,
   CheckCircle2,
+  FolderGit2,
+  Cloud,
+  Terminal,
+  Code2,
+  ExternalLink,
+  Search,
+  Database,
+  ChevronRight,
+  Layers,
+  Activity,
 } from 'lucide-react';
 import type { JarvisMessage, BiometricTelemetry } from '@/types/jarvis';
 import {
@@ -27,6 +37,12 @@ import {
 import { cacheEngine } from '@/utils/jarvisCacheManager';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { JarvisNetworkGraph, type GraphNode } from '@/components/JarvisNetworkGraph';
+import {
+  IBRAHIM_PROFILE,
+  IBRAHIM_GITHUB_PROJECTS,
+  IBRAHIM_HERMES_TASKS,
+  IBRAHIM_GCP_SERVICES,
+} from '@/data/ibrahimProfileData';
 
 interface JarvisCoreWidgetProps {
   biometrics?: BiometricTelemetry;
@@ -36,10 +52,10 @@ interface JarvisCoreWidgetProps {
 const DEFAULT_BIOMETRICS: BiometricTelemetry = {
   heartRate: 72,
   hrv: 64,
-  energyLevel: 88,
-  stressIndex: 18,
-  focusScore: 94,
-  sleepQuality: 85,
+  energyLevel: 92,
+  stressIndex: 14,
+  focusScore: 96,
+  sleepQuality: 88,
   circadianPhase: 'Peak Focus',
   cameraPulseActive: true,
   lastSyncTimestamp: 'Just now',
@@ -54,16 +70,32 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       id: 'm-1',
       sender: 'jarvis',
       content:
-        'مرحباً بك يا باشمهندس إبراهيم! أنا JARVIS، المساعد التنفيذي والتقني الخاص بك. جميع أنظمة SupplyMind، C-SAT، و Dawrly تحت المراقبة المستمرة. كيف يمكنني مساعدتك اليوم؟',
+        'مرحباً بك يا باشمهندس إبراهيم! أنا J.A.R.V.I.S. (Chief of Staff & AI Systems Architect). تم فحص ومزامنة كامل ملفك الهندسي: 41 مشروع على GitHub (بما فيها hermes-agent و MR-NLP-Robust-RAG-Chatbot و dual-site-clerk-auth)، بالإضافة إلى ربط خدمات Google Cloud (BigQuery, Cloud Run, GCS, Dataproc) ومهام Hermes Agent المستقلة. جميع الأنظمة تحت السيطرة وفي أعلى مستويات الأداء. كيف يمكنني دعمك في كتابة الكود أو التحليل السحابي اليوم؟',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      technicalKeywords: ['SupplyMind AI', 'C-SAT', 'Dawrly', 'RAG Isolation', 'Biometric Sensor'],
+      technicalKeywords: [
+        'Eng. Ibrahim Abdelsattar',
+        'hermes-agent',
+        'MR-NLP RAG',
+        'dual-site-clerk-auth',
+        'Google Cloud',
+        'BigQuery',
+        'Cloud Run',
+        'GCS',
+        'Dataproc',
+      ],
     },
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeechEnabled, setIsSpeechEnabled] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'chat' | 'graph' | 'split'>('chat');
+  const [viewMode, setViewMode] = useState<'chat' | 'projects' | 'cloud' | 'graph' | 'split'>('chat');
+
+  // Projects Explorer State
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(IBRAHIM_GITHUB_PROJECTS[0].id);
+  const [selectedFileIndex, setSelectedFileIndex] = useState<number>(0);
+  const [projectSearchQuery, setProjectSearchQuery] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
   // Pomodoro Focus Timer & Deep Work Mode State
   const [isPomodoroActive, setIsPomodoroActive] = useState<boolean>(false);
@@ -73,9 +105,11 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
   const [isDeepWorkMode, setIsDeepWorkMode] = useState<boolean>(false);
 
   // Daily Focus Goal Tracker State
-  const [dailyFocusGoal, setDailyFocusGoal] = useState<string>('Audit SupplyMind PGvector RLS Tenant Isolation');
+  const [dailyFocusGoal, setDailyFocusGoal] = useState<string>(
+    'Deploy MR-NLP RAG & Hermes Agent to Google Cloud Run with BigQuery Vector Index'
+  );
   const focusTargetMinutes = 60;
-  const [focusElapsedSeconds, setFocusElapsedSeconds] = useState<number>(1620);
+  const [focusElapsedSeconds, setFocusElapsedSeconds] = useState<number>(2100);
   const [isFocusGoalActive, setIsFocusGoalActive] = useState<boolean>(false);
   const [isFocusCompleted, setIsFocusCompleted] = useState<boolean>(false);
   const [isEditingFocusGoal, setIsEditingFocusGoal] = useState<boolean>(false);
@@ -92,7 +126,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
             setIsFocusCompleted(true);
             setIsFocusGoalActive(false);
             if (isSpeechEnabled) {
-              void speakWithNabra('عاش يا إبراهيم باشا! لقد حققت 100% من هدف التركيز اليومي بنجاح.');
+              void speakWithNabra('عاش يا باشمهندس إبراهيم! لقد حققت 100% من هدف التركيز الهندسي بنجاح.');
             }
           }
           return next;
@@ -116,7 +150,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       setIsFocusGoalActive(false);
       setFocusElapsedSeconds(focusTargetMinutes * 60);
       if (isSpeechEnabled) {
-        void speakWithNabra('عاش يا إبراهيم باشا! تم تأكيد إنجاز الهدف اليومي بنجاح!');
+        void speakWithNabra('ألف مبروك يا باشمهندس إبراهيم! تم تأكيد إنجاز الهدف اليومي بنجاح!');
       }
     } else {
       setFocusElapsedSeconds(0);
@@ -160,15 +194,13 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         setPomodoroMode('break');
         setTimeLeft(5 * 60);
         void speakText(
-          'عاش يا إبراهيم باشا! انتهت جلسة التركيز العميق (25 دقيقة). خذ استراحة لمدة 5 دقائق لإعادة شحن طاقتك.'
+          'عاش يا باشمهندس إبراهيم! انتهت جلسة التركيز العميق (25 دقيقة). استرح قليلاً لإعادة شحن الطاقة.'
         );
       } else {
         setPomodoroMode('work');
         setTimeLeft(25 * 60);
         setIsPomodoroActive(false);
-        void speakText(
-          'يا إبراهيم! انتهت الاستراحة، مستعدون لجلسة التركيز التالية؟'
-        );
+        void speakText('يا باشمهندس إبراهيم، انتهت الاستراحة، مستعدون لجلسة الهندسة القادمة؟');
       }
     }
 
@@ -205,7 +237,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       if (!isPomodoroActive) {
         setIsPomodoroActive(true);
       }
-      void speakText('تم تفعيل درع التركيز العميق! جميع الأنظمة في وضع الأداء الأقصى.');
+      void speakText('تم تفعيل درع التركيز العميق! جميع إشعارات وموارد النظام في وضع الأداء الأقصى.');
     } else {
       void speakText('تم إلغاء وضع التركيز العميق.');
     }
@@ -218,7 +250,24 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
   };
 
   const extractTechnicalKeywords = (content: string): string[] => {
-    const pool = ['SupplyMind', 'PGvector', 'RLS', 'FastAPI', 'PyTorch', 'C-SAT', 'Dawrly', 'RAG', 'Hermes', 'Docker', 'Biometrics'];
+    const pool = [
+      'Ibrahim Abdelsattar',
+      'hermes-agent',
+      'MR-NLP RAG',
+      'dual-site-clerk-auth',
+      'Arabic Sentiment',
+      'Fraud Detection',
+      'BigQuery',
+      'Cloud Run',
+      'Google Cloud',
+      'GCS',
+      'Dataproc',
+      'Cloud SQL',
+      'Prompt Caching',
+      'Voice Sentinel',
+      'FastAPI',
+      'PyTorch',
+    ];
     return pool.filter((kw) => content.toLowerCase().includes(kw.toLowerCase()));
   };
 
@@ -249,9 +298,9 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         replyContent = await onSendMessage(textToSend);
         cacheEngine.setCachedAnswer('jarvis_chief', textToSend, replyContent);
       } else {
-        // Fallback realistic response
+        // Fallback realistic response grounded in Ibrahim's stack
         await new Promise((r) => setTimeout(r, 900));
-        replyContent = `يا باشمهندس إبراهيم، تلقيت أمرك: "${textToSend}". تم فحص أنظمة SupplyMind ومؤشرات التركيز (${biometrics.energyLevel}% طاقة). يتم تنفيذ الخطوات المطلوبة ومزامنة البيانات في الـ RAG Vectorstore بنجاح.`;
+        replyContent = `يا باشمهندس إبراهيم، تلقيت أمرك: "${textToSend}". تم فحص مشاريعك على GitHub وخوادم Google Cloud المرتبطة (${biometrics.energyLevel}% طاقة، ${biometrics.focusScore}% تركيز). يتم تنفيذ الخطوات المطلوبة ومزامنة كود المشروع وتحديث السجلات بنجاح.`;
         cacheEngine.setCachedAnswer('jarvis_chief', textToSend, replyContent);
       }
 
@@ -273,7 +322,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       const errorReply: JarvisMessage = {
         id: `j-${Date.now()}`,
         sender: 'jarvis',
-        content: `يا باشمهندس، حدث خطأ أثناء الاتصال بالخادم: ${err?.message || 'Unknown error'}. يرجى التحقق من اتصال البوابة.`,
+        content: `يا باشمهندس، حدث خطأ أثناء الاتصال بالخادم: ${err?.message || 'Unknown error'}. يرجى التحقق من اتصال بوابة Hermes.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorReply]);
@@ -294,6 +343,27 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
 
   const focusPercent = Math.min(100, Math.round((focusElapsedSeconds / (focusTargetMinutes * 60)) * 100));
 
+  // Filtered GitHub projects
+  const filteredProjects = useMemo(() => {
+    return IBRAHIM_GITHUB_PROJECTS.filter((p) => {
+      const matchCat = selectedCategory === 'ALL' || p.category === selectedCategory;
+      const matchQuery =
+        p.name.toLowerCase().includes(projectSearchQuery.toLowerCase()) ||
+        p.description.toLowerCase().includes(projectSearchQuery.toLowerCase()) ||
+        p.language.toLowerCase().includes(projectSearchQuery.toLowerCase());
+      return matchCat && matchQuery;
+    });
+  }, [projectSearchQuery, selectedCategory]);
+
+  const activeProject = useMemo(() => {
+    return (
+      IBRAHIM_GITHUB_PROJECTS.find((p) => p.id === selectedProjectId) ||
+      IBRAHIM_GITHUB_PROJECTS[0]
+    );
+  }, [selectedProjectId]);
+
+  const activeFile = activeProject.highlightFiles[selectedFileIndex] || activeProject.highlightFiles[0];
+
   return (
     <div
       className={`w-full h-full flex flex-col rounded-xl bg-[#040d1a]/95 border transition-all shadow-[0_0_25px_rgba(0,240,255,0.08)] ${
@@ -302,36 +372,89 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
     >
       {/* Telemetry Header Bar */}
       <div className="px-4 py-3 border-b border-[#00f0ff]/20 bg-[#071526]/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-        <div className="flex items-center gap-2.5">
-          <div className="size-8 rounded-lg bg-[#00f0ff]/10 border border-[#00f0ff]/40 flex items-center justify-center text-[#00f0ff]">
-            <Bot className="size-4 animate-pulse" />
+        <div className="flex items-center gap-3">
+          {/* Avatar & Bot Indicator */}
+          <div className="relative">
+            <img
+              src={IBRAHIM_PROFILE.avatarUrl}
+              alt="Eng. Ibrahim Abdelsattar"
+              className="size-10 rounded-lg border-2 border-[#00f0ff]/60 object-cover shadow-[0_0_10px_rgba(0,240,255,0.4)]"
+            />
+            <div className="absolute -bottom-1 -right-1 size-4 rounded-full bg-[#00f0ff] border border-[#040d1a] flex items-center justify-center text-[#040d1a]">
+              <Bot className="size-2.5" />
+            </div>
           </div>
+
           <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-[#00f0ff] tracking-wide">JARVIS CHIEF OF STAFF</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-[#00f0ff] tracking-wide text-sm">JARVIS CHIEF OF STAFF</span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/30">
                 MARK 85
               </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#00f0ff]/10 text-[#80f7ff] border border-[#00f0ff]/30">
+                Eng. {IBRAHIM_PROFILE.name}
+              </span>
             </div>
-            <p className="text-[11px] text-[#80f7ff]/60">Executive Assistant & AI Systems Architect</p>
+            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[#80f7ff]/70 flex-wrap">
+              <span>{IBRAHIM_PROFILE.title}</span>
+              <span>•</span>
+              <a
+                href={IBRAHIM_PROFILE.githubUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[#ffb700] hover:underline flex items-center gap-1"
+              >
+                <FolderGit2 className="size-3" />
+                <span>@{IBRAHIM_PROFILE.githubUsername} (41 Repos)</span>
+              </a>
+              <span>•</span>
+              <span className="text-emerald-400 flex items-center gap-1">
+                <Cloud className="size-3" />
+                <span>Google Cloud Linked</span>
+              </span>
+            </div>
           </div>
         </div>
 
         {/* View Switcher & Audio Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center bg-[#020b14] p-1 rounded-lg border border-[#00f0ff]/20">
             <button
               onClick={() => setViewMode('chat')}
               className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all ${
-                viewMode === 'chat' ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]' : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
+                viewMode === 'chat'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+                  : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
               }`}
             >
               <MessageSquare className="size-3.5" /> Chat
             </button>
             <button
+              onClick={() => setViewMode('projects')}
+              className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all ${
+                viewMode === 'projects'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+                  : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
+              }`}
+            >
+              <FolderGit2 className="size-3.5" /> Projects & Code
+            </button>
+            <button
+              onClick={() => setViewMode('cloud')}
+              className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all ${
+                viewMode === 'cloud'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+                  : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
+              }`}
+            >
+              <Cloud className="size-3.5" /> Cloud & Tasks
+            </button>
+            <button
               onClick={() => setViewMode('graph')}
               className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all ${
-                viewMode === 'graph' ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]' : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
+                viewMode === 'graph'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+                  : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
               }`}
             >
               <Network className="size-3.5" /> Topology
@@ -339,7 +462,9 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
             <button
               onClick={() => setViewMode('split')}
               className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all ${
-                viewMode === 'split' ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]' : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
+                viewMode === 'split'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+                  : 'text-[#80f7ff]/60 hover:text-[#00f0ff]'
               }`}
             >
               <Columns className="size-3.5" /> Split
@@ -369,7 +494,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         }`}
       >
         {/* Daily Focus Goal Bar */}
-        <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+        <div className="flex items-center gap-2 flex-1 min-w-[260px]">
           <Target className="size-4 text-[#ffb700] shrink-0" />
           <span className="text-[11px] text-[#ffb700] font-bold uppercase shrink-0">FOCUS GOAL:</span>
           {isEditingFocusGoal ? (
@@ -475,34 +600,326 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
           <Sparkles className="size-3" /> COMMANDS:
         </span>
         <button
-          onClick={() => handleSendMessage('Review SupplyMind AI multi-tenant PGvector schema and verify tenant data isolation rules.')}
+          onClick={() =>
+            handleSendMessage(
+              'Inspect MR-NLP Robust RAG Chatbot architecture, Whisper ASR ingestion pipeline, and Qwen 1.5 4-bit quantization.'
+            )
+          }
           className="px-2.5 py-1 bg-[#07172b] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#c8c6c5] hover:text-[#00f0ff] rounded whitespace-nowrap transition-colors"
         >
-          🔒 SupplyMind Tenant Isolation
+          🔬 MR-NLP RAG Pipeline
         </button>
         <button
-          onClick={() => handleSendMessage('Draft a structured lesson plan for Deep Learning CNN architecture for my weekend AI class.')}
+          onClick={() =>
+            handleSendMessage(
+              'Review Hermes Agent turn loop prompt-caching stability, tools registry discovery, and JSON-RPC gateway performance.'
+            )
+          }
           className="px-2.5 py-1 bg-[#07172b] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#c8c6c5] hover:text-[#00f0ff] rounded whitespace-nowrap transition-colors"
         >
-          🎓 PyTorch CNN Class Plan
+          ⚡ Hermes Core Caching
         </button>
         <button
-          onClick={() => handleSendMessage('Assess my current energy level (88%) and recommend the best high-impact coding task for the next 2 hours.')}
+          onClick={() =>
+            handleSendMessage(
+              'Analyze Google Cloud Platform integration: BigQuery vector embeddings, Cloud Run autoscaling, and GCS model storage.'
+            )
+          }
           className="px-2.5 py-1 bg-[#07172b] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#c8c6c5] hover:text-[#00f0ff] rounded whitespace-nowrap transition-colors"
         >
-          ⚡ Energy Task Recommendation
+          ☁️ Google Cloud & BigQuery
         </button>
         <button
-          onClick={() => handleSendMessage('Review C-SAT survey QR node scalability and suggest FastAPI performance optimization.')}
+          onClick={() =>
+            handleSendMessage(
+              'Review dual-site-clerk-auth cross-domain session routing and Next.js edge middleware security rules.'
+            )
+          }
           className="px-2.5 py-1 bg-[#07172b] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#c8c6c5] hover:text-[#00f0ff] rounded whitespace-nowrap transition-colors"
         >
-          📊 C-SAT QR Latency
+          🔐 Clerk Dual-Site Auth
+        </button>
+        <button
+          onClick={() =>
+            handleSendMessage(
+              'Assess Arabic-Sentiment-Analysis text normalization, Tashkeel removal, and transformer dialect embeddings.'
+            )
+          }
+          className="px-2.5 py-1 bg-[#07172b] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#c8c6c5] hover:text-[#00f0ff] rounded whitespace-nowrap transition-colors"
+        >
+          🗣️ Arabic Dialect NLP
         </button>
       </div>
 
-      {/* Main Content Area: Chat or Graph or Split */}
+      {/* Main Content Area: Chat or Projects or Cloud or Graph or Split */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {viewMode === 'graph' ? (
+        {viewMode === 'projects' ? (
+          /* Projects Explorer & Real Code Viewer */
+          <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden p-3 gap-3">
+            {/* Left: Repositories List */}
+            <div className="w-full lg:w-80 flex flex-col bg-[#020914]/90 rounded-lg border border-[#00f0ff]/20 overflow-hidden">
+              <div className="p-2.5 border-b border-[#00f0ff]/15 bg-[#07172b]/60 flex flex-col gap-2">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-[#00f0ff] font-bold flex items-center gap-1.5">
+                    <FolderGit2 className="size-3.5 text-[#ffb700]" />
+                    <span>GITHUB PROJECTS (41)</span>
+                  </span>
+                  <span className="text-[10px] text-[#80f7ff]/60">Eng. Ibrahim</span>
+                </div>
+                <div className="relative">
+                  <Search className="size-3.5 text-[#80f7ff]/50 absolute left-2.5 top-2" />
+                  <input
+                    type="text"
+                    value={projectSearchQuery}
+                    onChange={(e) => setProjectSearchQuery(e.target.value)}
+                    placeholder="Search projects & code..."
+                    className="w-full bg-[#040e1b] border border-[#00f0ff]/30 text-xs text-[#00f0ff] pl-8 pr-2.5 py-1 rounded outline-none placeholder-[#80f7ff]/40 font-mono"
+                  />
+                </div>
+                {/* Category Filter Chips */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none text-[10px]">
+                  {['ALL', 'Autonomous Agents', 'RAG & NLP', 'Full Stack & Auth', 'Machine Learning'].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`px-2 py-0.5 rounded whitespace-nowrap transition-colors ${
+                        selectedCategory === cat
+                          ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                          : 'bg-[#041224] text-slate-400 border border-transparent hover:text-cyan-200'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Projects Scroll Area */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-1.5 font-mono text-xs">
+                {filteredProjects.map((p) => {
+                  const isSelected = p.id === selectedProjectId;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProjectId(p.id);
+                        setSelectedFileIndex(0);
+                      }}
+                      className={`p-2.5 rounded-lg cursor-pointer border transition-all ${
+                        isSelected
+                          ? 'bg-[#00f0ff]/15 border-[#00f0ff] text-cyan-100 shadow-[0_0_12px_rgba(0,240,255,0.2)]'
+                          : 'bg-[#041224]/60 border-[#00f0ff]/15 hover:border-[#00f0ff]/40 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="font-bold text-xs truncate text-[#00f0ff]">{p.name}</span>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-400/10 text-amber-300 border border-amber-400/20 shrink-0">
+                          {p.language}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#80f7ff]/70 line-clamp-2 leading-relaxed">
+                        {p.description}
+                      </p>
+                      <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-[#00f0ff]/10 text-[10px] text-[#80f7ff]/50">
+                        <span>⭐ {p.stars} stars</span>
+                        <span>🍴 {p.forks} forks</span>
+                        <span className="text-[#ffb700]">{p.category}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right: Code Inspector & Project Architecture */}
+            <div className="flex-1 flex flex-col bg-[#020914]/90 rounded-lg border border-[#00f0ff]/20 overflow-hidden">
+              {/* Code Inspector Header */}
+              <div className="p-3 border-b border-[#00f0ff]/20 bg-[#07172b]/80 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-[#00f0ff] text-sm font-mono">{activeProject.fullName}</span>
+                    <a
+                      href={activeProject.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs px-2 py-0.5 rounded bg-[#00f0ff]/10 hover:bg-[#00f0ff]/20 text-[#80f7ff] border border-[#00f0ff]/30 flex items-center gap-1 font-mono transition-colors"
+                    >
+                      <span>View on GitHub</span>
+                      <ExternalLink className="size-3" />
+                    </a>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1 max-w-2xl">{activeProject.description}</p>
+                </div>
+
+                {/* File Tabs */}
+                <div className="flex items-center gap-1 bg-[#040e1b] p-1 rounded-lg border border-[#00f0ff]/30 overflow-x-auto max-w-full">
+                  {activeProject.highlightFiles.map((f, idx) => (
+                    <button
+                      key={f.filename}
+                      onClick={() => setSelectedFileIndex(idx)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1.5 transition-all whitespace-nowrap ${
+                        selectedFileIndex === idx
+                          ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold border border-[#00f0ff]/40 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                          : 'text-slate-400 hover:text-cyan-200'
+                      }`}
+                    >
+                      <Code2 className="size-3" />
+                      <span>{f.filename}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Code Display Area */}
+              <div className="flex-1 overflow-y-auto p-3 font-mono text-xs bg-[#01050c]">
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#00f0ff]/15 text-[11px] text-[#80f7ff]/60">
+                  <span className="flex items-center gap-1.5">
+                    <Terminal className="size-3.5 text-[#ffb700]" />
+                    <span>Source Code Inspector • {activeFile.filename}</span>
+                  </span>
+                  <button
+                    onClick={() => handleCopy(`code-${activeFile.filename}`, activeFile.code)}
+                    className="px-2.5 py-1 rounded bg-[#07172b] hover:bg-[#00f0ff]/20 border border-[#00f0ff]/30 text-[#80f7ff] hover:text-[#00f0ff] flex items-center gap-1 transition-colors"
+                  >
+                    {copiedId === `code-${activeFile.filename}` ? (
+                      <>
+                        <Check className="size-3 text-emerald-400" />
+                        <span>Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="size-3" />
+                        <span>Copy Code</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <pre className="text-cyan-100/90 leading-relaxed overflow-x-auto whitespace-pre font-mono p-2 bg-[#030914] rounded border border-[#00f0ff]/10">
+                  <code>{activeFile.code}</code>
+                </pre>
+
+                {/* Project File Tree List */}
+                <div className="mt-4 pt-3 border-t border-[#00f0ff]/20">
+                  <span className="text-[11px] font-bold text-[#ffb700] uppercase tracking-wide flex items-center gap-1 mb-2">
+                    <Layers className="size-3.5" /> Project Repository Structure
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    {activeProject.filesList.map((fName) => (
+                      <div
+                        key={fName}
+                        className="px-2 py-1 rounded bg-[#07172b]/70 border border-[#00f0ff]/20 text-[10px] text-cyan-200 flex items-center gap-1.5 truncate"
+                      >
+                        <ChevronRight className="size-2.5 text-[#ffb700] shrink-0" />
+                        <span className="truncate">{fName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : viewMode === 'cloud' ? (
+          /* Cloud & Hermes Tasks View */
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-xs">
+            {/* Hermes Agent Autonomous Tasks */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-[#00f0ff] font-bold text-sm">
+                  <Bot className="size-4 text-[#ffb700]" />
+                  <span>HERMES AGENT ORCHESTRATION & TASKS</span>
+                </div>
+                <span className="text-[11px] text-[#80f7ff]/70">Profile Home: Eng. Ibrahim Abdelsattar</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {IBRAHIM_HERMES_TASKS.map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-3 rounded-lg bg-[#020b14]/90 border border-[#00f0ff]/25 hover:border-[#00f0ff]/50 transition-all shadow-[0_0_15px_rgba(0,240,255,0.05)]"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="font-bold text-cyan-200 text-xs">{t.title}</span>
+                      <span
+                        className={`text-[9px] px-2 py-0.5 rounded border ${
+                          t.status === 'Operational'
+                            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                            : t.status === 'In Progress'
+                            ? 'bg-amber-400/10 text-amber-300 border-amber-400/30'
+                            : 'bg-[#00f0ff]/10 text-[#00f0ff] border-[#00f0ff]/30'
+                        }`}
+                      >
+                        {t.status}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed font-sans">{t.description}</p>
+                    <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-[#00f0ff]/10 text-[10px] text-[#80f7ff]/60">
+                      <span>Engine: {t.model}</span>
+                      <span>Latency: {t.latency}</span>
+                      <button
+                        onClick={() => handleSendMessage(`Run diagnostic review on ${t.title}`)}
+                        className="text-[#ffb700] hover:underline"
+                      >
+                        Inspect Task →
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Google Cloud Platform (GCP) Services */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-[#00f0ff] font-bold text-sm">
+                  <Cloud className="size-4 text-[#ffb700]" />
+                  <span>GOOGLE CLOUD PLATFORM (GCP) CONNECTED INFRASTRUCTURE</span>
+                </div>
+                <span className="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <Activity className="size-3" />
+                  <span>6 Services Synchronized</span>
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {IBRAHIM_GCP_SERVICES.map((g) => (
+                  <div
+                    key={g.id}
+                    className="p-3 rounded-lg bg-[#020b14]/90 border border-[#00f0ff]/25 hover:border-[#00f0ff]/50 transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="font-bold text-[#00f0ff] text-xs flex items-center gap-1.5">
+                          <Database className="size-3 text-[#ffb700]" />
+                          <span>{g.name}</span>
+                        </span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                          {g.status}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-[#80f7ff]/60">{g.region} • {g.category}</span>
+                      <p className="text-[11px] text-slate-300 mt-1.5 leading-relaxed font-sans">
+                        {g.description}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-[#00f0ff]/10">
+                      <div className="text-[10px] text-amber-300 mb-1.5">⚡ {g.metrics}</div>
+                      <div className="flex flex-wrap gap-1">
+                        {g.tools.map((t) => (
+                          <span
+                            key={t}
+                            className="text-[9px] px-1.5 py-0.5 rounded bg-[#00f0ff]/10 text-[#80f7ff] border border-[#00f0ff]/20"
+                          >
+                            #{t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : viewMode === 'graph' ? (
           <div className="flex-1 p-3 overflow-hidden flex flex-col justify-center">
             <JarvisNetworkGraph onNodeSelect={handleGraphNodeSelect} height={420} />
           </div>
@@ -548,13 +965,13 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
             type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Command J.A.R.V.I.S. regarding SupplyMind, C-SAT, Dawrly, PyTorch classes..."
+            placeholder="Command J.A.R.V.I.S. regarding Ibrahim's GitHub repos, Hermes Agent tasks, Google Cloud..."
             className="flex-1 bg-[#040e1b] border border-[#00f0ff]/30 focus:border-[#00f0ff] text-xs text-[#00f0ff] px-3.5 py-2.5 rounded-lg outline-none placeholder-[#80f7ff]/40 font-mono transition-all shadow-[inset_0_0_8px_rgba(0,240,255,0.05)]"
           />
           <button
             type="submit"
             disabled={!inputValue.trim() || isLoading}
-            className="px-4 py-2.5 rounded-lg bg-gradient-to-r from-[#00f0ff] to-[#0088ff] text-[#040d1a] font-bold text-xs flex items-center gap-1.5 hover:shadow-[0_0_15px_rgba(0,240,255,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-4 py-2.5 rounded-lg bg-gradient-to-r from-[#00f0ff] to-[#0088ff] text-[#040d1a] font-bold text-xs flex items-center gap-1.5 hover:shadow-[0_0_15px_rgba(0,240,255,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed font-mono"
           >
             <Send className="size-3.5" />
             <span>EXECUTE</span>
@@ -588,7 +1005,7 @@ function MessageCard({
       >
         <div className="flex items-center justify-between gap-4 mb-1 text-[10px] font-mono text-[#80f7ff]/60 border-b border-[#00f0ff]/10 pb-1">
           <span className="font-bold flex items-center gap-1">
-            {isUser ? 'IBRAHIM (COMMANDER)' : 'JARVIS MARK 85'}
+            {isUser ? 'ENG. IBRAHIM (COMMANDER)' : 'JARVIS MARK 85'}
             {message.isCached && (
               <span className="px-1 rounded bg-[#00f0ff]/10 text-[#00f0ff] text-[9px]">CACHED</span>
             )}

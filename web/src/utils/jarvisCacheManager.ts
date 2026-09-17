@@ -39,7 +39,7 @@ class CacheEngine {
   }
 
   private loadFromStorage() {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
     try {
       const savedCache = localStorage.getItem(STORAGE_KEY_AI_CACHE);
       if (savedCache) {
@@ -64,7 +64,7 @@ class CacheEngine {
   }
 
   private saveToStorage() {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
     try {
       const array = Array.from(this.memoryCache.values());
       localStorage.setItem(STORAGE_KEY_AI_CACHE, JSON.stringify(array));

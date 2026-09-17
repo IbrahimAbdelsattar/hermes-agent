@@ -528,7 +528,18 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         try {
           reply = await onSendMessage(text, selectedPersona);
         } catch (err) {
-          console.warn('[voice] onSendMessage failed, using persona fallback:', err);
+          console.warn('[voice] onSendMessage failed:', err);
+          const isAr = isArabic(text);
+          const errMsg = err instanceof Error ? err.message : String(err || 'Communication error');
+          if (selectedPersona === 'gwen') {
+            reply = isAr
+              ? `عذراً يا باشا، واجهت مشكلة في الاتصال بالنظام (${errMsg}). تقدر تكرر كلامك؟`
+              : `Pardon me, boss! I encountered a connection issue (${errMsg}). Could you repeat your question?`;
+          } else {
+            reply = isAr
+              ? `عذراً يا فندم، تعذر إتمام المعالجة عبر النواة المركزية (${errMsg}). يرجى تكرار الأمر.`
+              : `Apologies, sir. Unable to communicate with the core intelligence (${errMsg}). Please repeat your request.`;
+          }
         }
       }
 
@@ -536,12 +547,12 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         const isAr = isArabic(text);
         if (selectedPersona === 'gwen') {
           reply = isAr
-            ? `أهلاً يا باشا! أنا جوين مع حضرتك. سمعتك بتقول: "${text}". أنا جاهزة لأي أمر أو استفسار!`
-            : `Hello! I am Gwen. I heard you say: "${text}". I'm here and fully synchronized to assist you.`;
+            ? `أهلاً يا باشا! أنا جوين مع حضرتك وسامعاك كويس جداً.`
+            : `Hello boss! Gwen here, standing by for your instructions.`;
         } else {
           reply = isAr
-            ? `تحياتي يا فندم! معك جارفيس. استلمت طلبك: "${text}". جاري المعالجة والمتابعة فوراً.`
-            : `Greetings. Jarvis online. I received your request: "${text}". Executing system tasks.`;
+            ? `تحت أمرك يا فندم، جارفيس في الخدمة وبانتظار توجيهاتك.`
+            : `At your service, sir. Systems operational and standing by for your command.`;
         }
       }
 
