@@ -1,22 +1,19 @@
-import React, { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import React, { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bot,
-  Check,
-  Cpu,
-  Headphones,
   LoaderCircle,
   Mic,
   MicOff,
   Phone,
   PhoneOff,
   Radio,
-  RefreshCw,
   Send,
   Sparkles,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react';
+import { authedFetch } from '@/lib/api';
 import { AudioWaveformVisualizer } from './AudioWaveformVisualizer';
 import { getVoicesSafely, isArabic, pickArabicVoice, sanitizeTextForSpeech } from '../lib/speechUtils';
 
@@ -141,32 +138,30 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       setIsSpeaking(true);
       try {
         // Try calling Hermes Agent /api/audio/speak endpoint first if available
-        const response = await fetch('/api/audio/speak', {
+        const response = await authedFetch('/api/audio/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text,
-            voice: selectedPersona === 'gwen' ? 'Sarah' : 'Christopher',
-            language: isArabic(text) ? 'ar' : 'en',
-          }),
+          body: JSON.stringify({ text }),
         }).catch(() => null);
 
         if (response && response.ok) {
-          const contentType = response.headers.get('content-type') || '';
-          if (contentType.includes('audio')) {
-            const url = URL.createObjectURL(await response.blob());
-            const audio = new Audio(url);
+          const data = (await response.json().catch(() => null)) as {
+            ok?: boolean;
+            data_url?: string;
+          } | null;
+
+          if (data?.ok && data.data_url) {
+            const audio = new Audio(data.data_url);
             audioRef.current = audio;
             await new Promise<void>((resolve) => {
               const done = () => {
-                URL.revokeObjectURL(url);
+                audioRef.current = null;
                 resolve();
               };
               audio.onended = done;
               audio.onerror = done;
               audio.play().catch(done);
             });
-            audioRef.current = null;
             return;
           }
         }
@@ -177,15 +172,20 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         setIsSpeaking(false);
       }
     },
-    [speakerOn, selectedPersona, speakWithBrowser, stopSpeaking]
+    [speakerOn, speakWithBrowser, stopSpeaking]
   );
 
   const sendChatTurn = useCallback(
     async (text: string, sessionVersion: number) => {
       let reply = '';
       if (onSendMessage) {
-        reply = await onSendMessage(text, selectedPersona);
-      } else {
+        try {
+          reply = await onSendMessage(text, selectedPersona);
+        } catch (err) {
+          console.warn('[voice] onSendMessage failed, using persona fallback:', err);
+        }
+      }
+      if (!reply) {
         // Default local response generator fallback
         const isAr = isArabic(text);
         if (selectedPersona === 'gwen') {
@@ -484,8 +484,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           </div>
 
           <div className="bg-[#071526]/80 border border-[#00f0ff]/20 p-2.5 rounded-lg flex flex-col justify-center col-span-2 md:col-span-2">
-            <span className="text-[10px] text-[#80f7ff]/60 uppercase">Sentinel Engine Status</span>
-            <span className="text-xs truncate text-[#80f7ff]">{recognitionStatus}</span>
+            <span className="text-[10px] text-[#80f7ff]/60 uppercase">Sentinel Engine & Mic</span>
+            <span className="text-xs truncate text-[#80f7ff]">{micStatus} • {recognitionStatus}</span>
           </div>
         </div>
 
