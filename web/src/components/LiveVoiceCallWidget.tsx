@@ -31,6 +31,8 @@ import {
   sanitizeTextForSpeech,
   splitTextIntoSentences,
 } from '../lib/speechUtils';
+import { parseMusicCommand, findBestTrackIndex } from '../utils/musicCommander';
+import { DEFAULT_DEMO_TRACKS } from './MusicPlayerWidget';
 
 type CallStatus = 'idle' | 'starting' | 'active';
 type Speaker = 'user' | 'assistant' | 'system';
@@ -483,13 +485,53 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const sendChatTurn = useCallback(
     async (text: string, sessionVersion: number) => {
       let reply = '';
-      if (onSendMessage) {
+
+      const musicCmd = parseMusicCommand(text);
+      if (musicCmd) {
+        window.dispatchEvent(
+          new CustomEvent('jarvis:music:command', {
+            detail: musicCmd,
+          })
+        );
+
+        const isAr = isArabic(text);
+        if (musicCmd.action === 'pause') {
+          reply = isAr
+            ? (selectedPersona === 'gwen' ? 'وقفتلك الموسيقى يا باشا تماماً.' : 'تم إيقاف تشغيل الموسيقى يا فندم فوراً.')
+            : (selectedPersona === 'gwen' ? 'Music paused, boss!' : 'Music playback suspended, sir.');
+        } else if (musicCmd.action === 'resume') {
+          reply = isAr
+            ? (selectedPersona === 'gwen' ? 'رجعت شغلتلك التراك يا باشا.' : 'تم استئناف تشغيل الموسيقى يا فندم.')
+            : (selectedPersona === 'gwen' ? 'Resumed audio playback, boss!' : 'Resuming music playback, sir.');
+        } else if (musicCmd.action === 'next') {
+          reply = isAr
+            ? (selectedPersona === 'gwen' ? 'شغلتلك التراك اللي بعده يا باشا.' : 'جاري الانتقال إلى التراك التالي يا فندم.')
+            : (selectedPersona === 'gwen' ? 'Advancing to next track, boss!' : 'Advancing to the next track, sir.');
+        } else if (musicCmd.action === 'prev') {
+          reply = isAr
+            ? (selectedPersona === 'gwen' ? 'رجعتلك للتراك اللي قبله يا باشا.' : 'جاري الرجوع إلى التراك السابق يا فندم.')
+            : (selectedPersona === 'gwen' ? 'Previous track coming up, boss!' : 'Returning to previous track, sir.');
+        } else {
+          const targetIdx = findBestTrackIndex(musicCmd.query || '', DEFAULT_DEMO_TRACKS);
+          const matched = DEFAULT_DEMO_TRACKS[targetIdx];
+          const trackTitle = matched ? matched.title : (musicCmd.query || 'التراك المختار');
+          reply = isAr
+            ? (selectedPersona === 'gwen' ? `عيوني يا باشا! بشغلك ${trackTitle} حالاً.` : `تحت أمرك يا فندم، جاري تشغيل ${trackTitle} فوراً.`)
+            : (selectedPersona === 'gwen' ? `Playing ${trackTitle} for you, boss!` : `Right away, sir. Commencing playback of ${trackTitle}.`);
+        }
+
+        // Notify backend session asynchronously so memory reflects the command
+        if (onSendMessage) {
+          onSendMessage(text, selectedPersona).catch(() => {});
+        }
+      } else if (onSendMessage) {
         try {
           reply = await onSendMessage(text, selectedPersona);
         } catch (err) {
           console.warn('[voice] onSendMessage failed, using persona fallback:', err);
         }
       }
+
       if (!reply) {
         const isAr = isArabic(text);
         if (selectedPersona === 'gwen') {
