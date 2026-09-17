@@ -28,6 +28,7 @@ import {
 import { authedFetch, type SessionInfo } from '@/lib/api';
 import { JarvisUltronVoiceOrb, type OrbTheme } from './JarvisUltronVoiceOrb';
 import {
+  detectLanguageContent,
   getVoicesSafely,
   isArabic,
   pickArabicVoice,

@@ -73,6 +73,8 @@ export const speakWithNabra = async (text: string): Promise<void> => {
   if (!clean || typeof window === 'undefined') return;
   stopNabraAudio();
 
+  const isAr = /[\u0600-\u06FF]/.test(clean);
+
   // Tier 1: Try Hermes Audio backend (/api/audio/speak)
   try {
     const res = await authedFetch('/api/audio/speak', {
@@ -80,7 +82,10 @@ export const speakWithNabra = async (text: string): Promise<void> => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: clean,
-        voice: 'jarvis',
+        persona: isAr ? 'gwen' : 'jarvis',
+        provider: isAr ? 'elevenlabs' : undefined,
+        voice_id: isAr ? 'EXAVITQu4vr4xnSDxMaL' : undefined,
+        model_id: isAr ? 'eleven_multilingual_v2' : undefined,
       }),
     });
 
@@ -103,15 +108,14 @@ export const speakWithNabra = async (text: string): Promise<void> => {
       }
     }
   } catch (err) {
-    console.warn('Backend audio synthesis unavailable, falling back to Web Speech:', err);
+    console.warn('Backend audio synthesis unavailable:', err);
   }
 
-  // Tier 2: Browser Web SpeechSynthesis API fallback
-  if ('speechSynthesis' in window) {
+  // Tier 2: Browser Web SpeechSynthesis API fallback (STRICTLY FOR ENGLISH ONLY - Never female/Arabic)
+  if (!isAr && 'speechSynthesis' in window) {
     await new Promise<void>((resolve) => {
       const utter = new SpeechSynthesisUtterance(clean);
-      const isArabic = /[\u0600-\u06FF]/.test(clean);
-      utter.lang = isArabic ? 'ar-EG' : 'en-US';
+      utter.lang = 'en-US';
       utter.rate = 1.05;
       utter.pitch = 0.95;
       utter.onend = () => resolve();

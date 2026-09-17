@@ -296,8 +296,14 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
     voice_id = payload.voice_id
     model_id = payload.model_id
 
-    # For Gwen female voice persona: use ElevenLabs free multilingual model and female voice
-    if (payload.persona or "").lower() == "gwen" or (voice_id or "").lower() == "gwen":
+    # Auto-detect language: if text is predominantly Arabic or Gwen is selected,
+    # route to ElevenLabs free multilingual model with Sarah female voice
+    import re
+    arabic_chars = len(re.findall(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", text))
+    latin_chars = len(re.findall(r"[a-zA-Z]", text))
+    is_arabic = (arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)) or (payload.persona or "").lower() == "gwen"
+
+    if is_arabic or (voice_id or "").lower() == "gwen":
         provider = "elevenlabs"
         voice_id = "EXAVITQu4vr4xnSDxMaL" if (not voice_id or voice_id.lower() == "gwen") else voice_id
         model_id = model_id or "eleven_multilingual_v2"
