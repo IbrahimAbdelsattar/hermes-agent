@@ -305,6 +305,9 @@ USER root
 RUN mkdir -p /opt/hermes/bin && \
     cp /opt/hermes/docker/hermes-exec-shim.sh /opt/hermes/bin/hermes && \
     chmod 0755 /opt/hermes /opt/hermes/bin/hermes && \
+    chmod -R 0755 /opt/hermes/docker && \
+    find /opt/hermes -type d -not -path "*/.venv*" -not -path "*/node_modules*" -exec chmod 0755 {} + && \
+    find /opt/hermes -type f -not -path "*/.venv*" -not -path "*/node_modules*" -exec chmod a+r {} + && \
     printf 'docker\n' > /opt/hermes/.install_method
 # The ``.install_method`` stamp is baked next to the running code (the install
 # tree), NOT into $HERMES_HOME. $HERMES_HOME (/opt/data) is a shared data
