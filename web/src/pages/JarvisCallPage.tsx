@@ -360,7 +360,12 @@ export default function JarvisCallPage() {
   );
 
   const handleSendMessage = useCallback(
-    async (text: string, persona: VoicePersona = "jarvis", language: CallLanguage = "Arabic"): Promise<string> => {
+    async (
+      text: string,
+      persona: VoicePersona = "jarvis",
+      _language: CallLanguage = "Arabic",
+      onDelta?: (partial: string) => void,
+    ): Promise<string> => {
       const gw = gatewayRef.current;
       if (!gw) {
         throw new Error("Gateway client not initialized");
@@ -379,18 +384,15 @@ export default function JarvisCallPage() {
         );
       }
 
-      const isAr =
-        language === "Arabic"
-          ? true
-          : language === "English"
-          ? false
-          : /[\u0600-\u06FF]/.test(text);
-      const musicNote = musicCmd
-        ? ` [تم تشغيل الأمر الموسيقي "${musicCmd.action}"${musicCmd.isYouTube ? " من يوتيوب (YouTube Playback)" : ""} في مشغل النظام فوراً]`
-        : "";
-      const personaInstruction = isAr
-        ? `[تعليمات هيرميس إيجينت للمكالمة الصوتية الحية: أنت هيرميس إيجينت (Hermes Agent) المتقدم والذكي، وتعمل بواجهة ${persona === 'gwen' ? 'جوين (Gwen)' : 'جارفيس (Jarvis)'}. أنت متصل بالكامل وبشكل مباشر مع النواة المركزية لهيرميس وكافة أدوات وقدرات النظام (Hermes Tools & Capabilities) بما فيها: تنفيذ أوامر الترمينال والباش (terminal/bash)، فحص وتعديل الملفات (file tools)، البحث المباشر في الويب وتصفح الإنترنت (web_search & browser tools)، استدعاء وتشغيل المهارات (skills)، تنفيذ الأكواد (execute_code)، والمهام المجدولة وإدارة الذاكرة. إذا طلب المستخدم أي مهمة أو استعلام أو فحص أو أمر نظام أو كتابة كود أو بحث، استدعِ واستخدم أدواتك المتاحة فوراً كـ Hermes Agent ونفذ المطلوب بكل إمكانياتك وقدراتك. لديك أيضاً مشغل موسيقى حقيقي مدمج في النظام (JARVIS Audio Deck) وقدرة تشغيل أي أغنية أو فيديو من يوتيوب (YouTube) فوراً بأقل زمن تأخير؛ وإذا طُلب تشغيل موسيقى أو يوتيوب أكد التشغيل فوراً كـ ${persona === 'gwen' ? 'جوين' : 'جارفيس'}. لديك ذاكرة كاملة لجلساتنا السابقة ومشاريعنا المتفق عليها. أجب بإيجاز شديد في جملة أو جملتين فقط بالعامية المصرية الراقية بدون أي ماركداون أو رموز غير منطوقة.${musicNote}] `
-        : `[VOICE CALL MODE - HERMES AGENT: You are the advanced Hermes Agent operating through the ${persona === 'gwen' ? 'Gwen' : 'Jarvis'} interface. You are fully and directly connected to ALL Hermes tools and system capabilities: terminal & bash execution, file read/write/inspection, live web search & browser navigation, code execution, skills, cronjobs, task management, and persistent memory. If the user asks for any task, query, code execution, web search, or system command, proactively use your tools immediately as Hermes Agent and execute the task with all your capabilities. You also have a real built-in JARVIS Audio Deck and the autonomous capability to search and play any YouTube video or music immediately with ultra-low latency; if music or YouTube is requested, enthusiastically confirm playback immediately. You recall all previous agreements and memory. Respond concisely in 1-2 spoken sentences only, without any markdown or symbols.${musicNote}] `;
+      // Hermes-chat mechanism: send the RAW user text with surface
+      // "voice-live" and let the backend prepend VOICE_LIVE_TURN_NOTE to the
+      // MODEL INPUT ONLY (tui_gateway/session_notifications._prepend_note).
+      // The old code prepended a ~400-token personaInstruction to the
+      // PERSISTED text on every turn, which broke per-conversation prompt
+      // caching, polluted history, and added seconds of TTFB before the
+      // model could "understand" the answer. Hermes chat never does that —
+      // it sends what the user typed. Music side-effects are already
+      // dispatched via the window event above; they don't belong in the prompt.
 
       return new Promise<string>((resolve, reject) => {
         let fullText = "";
@@ -432,6 +434,14 @@ export default function JarvisCallPage() {
         const offDelta = gw.on("message.delta", (ev) => {
           if (matchSession(ev.session_id) && ev.payload?.text) {
             fullText += ev.payload.text;
+            // Hermes-chat mechanism: stream tokens immediately like the TUI
+            // does, instead of waiting for message.complete. This is what
+            // removes the perceived "takes more time to understand" delay.
+            try {
+              onDelta?.(fullText);
+            } catch {
+              /* streaming display is best-effort */
+            }
             resetTimeout(35000);
           }
         });
@@ -474,7 +484,7 @@ export default function JarvisCallPage() {
         const submitPrompt = (sidToSubmit: string) => {
           gw.request("prompt.submit", {
             session_id: sidToSubmit,
-            text: `${personaInstruction}${text}`,
+            text,
             surface: "voice-live",
           }).catch(
             async (err) => {
@@ -490,7 +500,7 @@ export default function JarvisCallPage() {
                   currentRuntimeSid = fresh.runtimeSid;
                   await gw.request("prompt.submit", {
                     session_id: currentRuntimeSid,
-                    text: `${personaInstruction}${text}`,
+                    text,
                     surface: "voice-live",
                   });
                   return;
@@ -609,13 +619,13 @@ return (
           onDeleteSession={handleDeleteSession}
           onRefreshSessions={refreshCallSessions}
           initialMessages={initialMessages}
-          onSendMessage={(txt, p, lang) => handleSendMessage(txt, p, lang)}
+          onSendMessage={(txt, p, lang, onDelta) => handleSendMessage(txt, p, lang, onDelta)}
         />
       </div>
 
       <div className={cn("flex-1 min-h-[550px]", activeTab !== "core" && "hidden")}>
         <JarvisCoreWidget
-          onSendMessage={(txt) => handleSendMessage(txt, "jarvis")}
+          onSendMessage={(txt, onDelta) => handleSendMessage(txt, "jarvis", "Auto", onDelta)}
         />
       </div>
 

@@ -223,6 +223,7 @@ class TTSSpeakRequest(BaseModel):
     provider: Optional[str] = None
     voice_id: Optional[str] = None
     model_id: Optional[str] = None
+    language: Optional[str] = None
 
 class VoiceLiveSessionRequest(BaseModel):
     """POST /api/audio/voice-live/session: the renderer's WebRTC SDP offer plus optional prior

@@ -46,6 +46,11 @@ import {
 } from '@/lib/ironManAudioFX';
 import { matchWakeWord } from '@/utils/wakeWordMatcher';
 import { DEFAULT_DEMO_TRACKS } from './MusicPlayerWidget';
+import {
+  createCleanAudioPipeline,
+  AudioSpeechRecorder,
+  type CleanAudioPipeline,
+} from '../lib/audioCleaningUtils';
 
 type CallStatus = 'idle' | 'starting' | 'active';
 type Speaker = 'user' | 'assistant' | 'system';
@@ -64,7 +69,12 @@ export interface CallMessage {
 
 export interface LiveVoiceCallWidgetProps {
   initialPersona?: VoicePersona;
-  onSendMessage?: (text: string, persona: VoicePersona, language?: CallLanguage) => Promise<string>;
+  onSendMessage?: (
+    text: string,
+    persona: VoicePersona,
+    language?: CallLanguage,
+    onDelta?: (partial: string) => void,
+  ) => Promise<string>;
   onClose?: () => void;
   activeSessionId?: string | null;
   activeSessionTitle?: string;
@@ -203,6 +213,10 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const speechAccumulatorRef = useRef<string>('');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const cleanPipelineRef = useRef<CleanAudioPipeline | null>(null);
+  const audioRecorderRef = useRef<AudioSpeechRecorder | null>(null);
+  const [isWhisperFallback, setIsWhisperFallback] = useState<boolean>(false);
+  const isWhisperFallbackRef = useRef<boolean>(false);
   const speechAudioCtxRef = useRef<AudioContext | null>(null);
   const speechAnalyserRef = useRef<AnalyserNode | null>(null);
   const [orbTheme, setOrbTheme] = useState<OrbTheme>(selectedPersona === 'gwen' ? 'gwen' : 'jarvis');
@@ -357,12 +371,34 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       }
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       const voices = await getVoicesSafely();
-      const isArabicSpeech = langResult.isArabicPredominant;
+      const isArabicSpeech =
+        languageRef.current === 'Arabic'
+          ? true
+          : languageRef.current === 'English'
+          ? false
+          : langResult.isArabicPredominant;
       const voice = isArabicSpeech
         ? pickArabicVoice(voices, 'jarvis')
         : pickEnglishVoice(voices, 'jarvis');
 
       if (isArabicSpeech && !voice) {
+        const anyArabic = voices.find((v) => v.lang.toLowerCase().includes('ar'));
+        if (anyArabic) {
+          const sentences = splitTextIntoSentences(text);
+          for (const sentence of sentences) {
+            if (statusRef.current !== 'active' || !speakerOnRef.current || !isSpeakingRef.current) break;
+            await new Promise<void>((resolve) => {
+              const utterance = new SpeechSynthesisUtterance(sentence);
+              utterance.lang = anyArabic.lang || 'ar-EG';
+              utterance.voice = anyArabic;
+              utterance.rate = 1.0;
+              utterance.onend = () => resolve();
+              utterance.onerror = () => resolve();
+              window.speechSynthesis.speak(utterance);
+            });
+          }
+          return;
+        }
         console.warn('[VoiceSentinel] No authentic male Arabic voice available in browser, skipping local fallback.');
         return;
       }
@@ -449,6 +485,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           body: JSON.stringify({
             text,
             persona: effectivePersona,
+            language: languageRef.current,
           }),
           signal: controller.signal,
         }).catch(() => null);
@@ -643,7 +680,28 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         }
       } else if (onSendMessage) {
         try {
-          reply = await onSendMessage(text, personaToUse, languageRef.current);
+          // Hermes-chat mechanism: pass an onDelta callback so the first
+          // token paints immediately (like the TUI streams message.delta)
+          // instead of waiting for message.complete.
+          const streamingId = messageId();
+          let streamingShown = false;
+          reply = await onSendMessage(text, personaToUse, languageRef.current, (partial) => {
+            if (sessionVersion !== sessionVersionRef.current || statusRef.current !== 'active') return;
+            const effective: VoicePersona = personaRef.current || personaToUse || selectedPersona;
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const next: CallMessage = { id: streamingId, sender: 'assistant', text: partial, persona: effective, timestamp };
+            if (!streamingShown) {
+              streamingShown = true;
+              replaceMessages([...messagesRef.current, next]);
+            } else {
+              replaceMessages(messagesRef.current.map((m) => (m.id === streamingId ? next : m)));
+            }
+          });
+          // Drop the streaming placeholder; the final append below renders
+          // the authoritative reply (and avoids a duplicate bubble).
+          if (streamingShown) {
+            replaceMessages(messagesRef.current.filter((m) => m.id !== streamingId));
+          }
         } catch (err) {
           console.warn('[voice] onSendMessage failed:', err);
           const errMsg = err instanceof Error ? err.message : String(err || 'Communication error');
@@ -677,7 +735,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       appendMessage('assistant', reply, effectivePersona);
       await speak(reply, effectivePersona);
     },
-    [appendMessage, onSendMessage, selectedPersona, speak]
+    [appendMessage, onSendMessage, replaceMessages, selectedPersona, speak]
   );
 
   const submitTurn = useCallback(
@@ -749,24 +807,24 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         return null; // Push-to-talk never times out automatically
       }
 
-      let baseMs = 2200; // Balanced default: 2.2 seconds
+      let baseMs = 1700; // Balanced default: 1.7 seconds
       if (pauseTolerance === 'relaxed') {
-        baseMs = 3000; // 3.0 seconds
+        baseMs = 2500; // 2.5 seconds
       } else if (pauseTolerance === 'fast') {
-        baseMs = 1300; // 1.3 seconds
+        baseMs = 1100; // 1.1 seconds
       }
 
       if (!antiInterruptionShield) {
         return baseMs;
       }
 
-      let dynamicBonus = 500;
+      let dynamicBonus = 350;
       const trimmed = textDraft.trim();
       const words = trimmed.split(/\s+/).filter(Boolean);
 
       // Short utterances (<= 3 words): user is likely just beginning their thought
       if (words.length > 0 && words.length <= 3) {
-        dynamicBonus += 800;
+        dynamicBonus += 500;
       }
 
       // Detect mid-sentence continuation conjunctions and connectors
@@ -793,10 +851,11 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         lastWord.startsWith('ف');
 
       if (isContinuation) {
-        dynamicBonus += 1200;
+        dynamicBonus += 800;
       }
 
-      return baseMs + dynamicBonus;
+      // Hard cap at 4200ms max so ambient noise never holds a turn indefinitely
+      return Math.min(4200, baseMs + dynamicBonus);
     },
     [antiInterruptionShield, pauseTolerance, turnMode]
   );
@@ -1053,10 +1112,15 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     };
 
     recognition.onerror = (event: any) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      const errType = event.error || 'unknown';
+      if (errType === 'not-allowed' || errType === 'service-not-allowed') {
         setRecognitionStatus('Microphone permission denied — typed input active');
-      } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
-        setRecognitionStatus(`Speech recognition note: ${event.error || 'unknown'}`);
+      } else if (errType === 'network') {
+        setRecognitionStatus('Web Speech API network offline — Hermes Whisper STT standby');
+        setIsWhisperFallback(true);
+        isWhisperFallbackRef.current = true;
+      } else if (errType !== 'aborted' && errType !== 'no-speech') {
+        setRecognitionStatus(`Speech recognition note: ${errType}`);
       }
     };
 
@@ -1112,13 +1176,29 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       recognition.start();
       recognitionRunningRef.current = true;
     } catch (err: any) {
-      if (err?.name === 'InvalidStateError' || String(err?.message || '').includes('already started')) {
-        recognitionRunningRef.current = true;
-      } else {
-        scheduleRearm(350);
-      }
+      // Fix deadlock: Never set recognitionRunningRef.current = true on error!
+      recognitionRunningRef.current = false;
+      recognitionRef.current = null;
+      scheduleRearm(400);
     }
   }, [createRecognition, scheduleRearm]);
+
+  const handleLanguageChange = useCallback(
+    (lang: CallLanguage) => {
+      setSelectedLanguage(lang);
+      languageRef.current = lang;
+      stopSpeaking();
+      stopRecognition();
+      const langLabel =
+        lang === 'Arabic' ? 'Arabic - مصرية' : lang === 'English' ? 'English (US)' : 'Auto Adaptive';
+      setMicStatus(`Language switched to ${langLabel}`);
+      setRecognitionStatus(`Listening mode updated: ${langLabel}`);
+      if (statusRef.current === 'active' && !isProcessingRef.current) {
+        scheduleRearm(350);
+      }
+    },
+    [scheduleRearm, stopRecognition, stopSpeaking]
+  );
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1185,6 +1265,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      if (cleanPipelineRef.current) {
+        cleanPipelineRef.current.cleanup();
+        cleanPipelineRef.current = null;
+      }
+      if (audioRecorderRef.current) {
+        audioRecorderRef.current.abort();
+        audioRecorderRef.current = null;
+      }
       if (audioCtxRef.current) {
         try {
           audioCtxRef.current.close();
@@ -1214,27 +1302,36 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
           });
           streamRef.current = stream;
-          try {
-            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-            if (AudioContextClass) {
-              const ctx = new AudioContextClass();
-              if (ctx.state === 'suspended') {
-                await ctx.resume();
+
+          // Initialize Web Audio DSP Clean Pipeline
+          const pipeline = createCleanAudioPipeline(stream);
+          if (pipeline) {
+            cleanPipelineRef.current = pipeline;
+            audioCtxRef.current = pipeline.audioContext;
+            analyserRef.current = pipeline.analyser;
+          } else {
+            try {
+              const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+              if (AudioContextClass) {
+                const ctx = new AudioContextClass();
+                if (ctx.state === 'suspended') {
+                  await ctx.resume();
+                }
+                const srcNode = ctx.createMediaStreamSource(stream);
+                const analyser = ctx.createAnalyser();
+                analyser.fftSize = 256;
+                srcNode.connect(analyser);
+                audioCtxRef.current = ctx;
+                analyserRef.current = analyser;
               }
-              const srcNode = ctx.createMediaStreamSource(stream);
-              const analyser = ctx.createAnalyser();
-              analyser.fftSize = 256;
-              srcNode.connect(analyser);
-              audioCtxRef.current = ctx;
-              analyserRef.current = analyser;
+            } catch (audioErr) {
+              console.warn('[voice] AudioContext init error:', audioErr);
             }
-          } catch (audioErr) {
-            console.warn('[voice] AudioContext init error:', audioErr);
           }
-          setMicStatus('Microphone active & capture bound');
+          setMicStatus('Microphone active & DSP Voice Filter engaged');
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'permission unavailable';
@@ -1246,9 +1343,10 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       if (!hasGreetedRef.current || isKnockOrAuto) {
         setHasGreeted(true);
         hasGreetedRef.current = true;
+        // Greet first; startRecognition will be called safely in speak()'s finally block
         window.setTimeout(() => {
           void triggerWakeGreeting(false);
-        }, 100);
+        }, 150);
       } else {
         appendMessage(
           'assistant',
@@ -1257,8 +1355,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             : 'Jarvis online. Live voice call session initialized with Hermes Agent.',
           selectedPersona
         );
+        window.setTimeout(startRecognition, 200);
       }
-      window.setTimeout(startRecognition, 100);
     },
     [appendMessage, selectedPersona, startRecognition, triggerWakeGreeting]
   );
@@ -1318,6 +1416,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     }
     stopSpeaking();
     stopRecognition();
+    if (cleanPipelineRef.current) {
+      cleanPipelineRef.current.cleanup();
+      cleanPipelineRef.current = null;
+    }
+    if (audioRecorderRef.current) {
+      audioRecorderRef.current.abort();
+      audioRecorderRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -1454,13 +1560,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           {/* Language selector tabs */}
           <div className="flex bg-[#030712] border border-[#00f0ff]/30 rounded-lg p-1 text-xs">
             <button
-              onClick={() => {
-                setSelectedLanguage('Arabic');
-                languageRef.current = 'Arabic';
-                stopRecognition();
-                scheduleRearm(150);
-                setMicStatus('Language set to Arabic (Egypt)');
-              }}
+              onClick={() => handleLanguageChange('Arabic')}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'Arabic'
                   ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
@@ -1470,13 +1570,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               عربي (EG)
             </button>
             <button
-              onClick={() => {
-                setSelectedLanguage('English');
-                languageRef.current = 'English';
-                stopRecognition();
-                scheduleRearm(150);
-                setMicStatus('Language set to English (US)');
-              }}
+              onClick={() => handleLanguageChange('English')}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'English'
                   ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
@@ -1486,13 +1580,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               English
             </button>
             <button
-              onClick={() => {
-                setSelectedLanguage('Auto');
-                languageRef.current = 'Auto';
-                stopRecognition();
-                scheduleRearm(150);
-                setMicStatus('Language set to Auto (Adaptive)');
-              }}
+              onClick={() => handleLanguageChange('Auto')}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'Auto'
                   ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
@@ -1896,7 +1984,20 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           </div>
 
           <div className="bg-[#071526]/80 border border-[#00f0ff]/20 p-2.5 rounded-lg flex flex-col justify-center col-span-2 md:col-span-2">
-            <span className="text-[10px] text-[#80f7ff]/60 uppercase">Sentinel Engine & Mic</span>
+            <div className="flex items-center justify-between text-[10px] text-[#80f7ff]/60 uppercase">
+              <span>Sentinel Engine & Mic</span>
+              <div className="flex items-center gap-1.5">
+                {isWhisperFallback && (
+                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono">
+                    Whisper Mode
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 text-[9px] text-emerald-300 font-mono">
+                  <Sparkles className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
+                  DSP Voice Filter: Active
+                </span>
+              </div>
+            </div>
             <span className="text-xs truncate text-[#80f7ff]">{micStatus} • {recognitionStatus}</span>
           </div>
         </div>

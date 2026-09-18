@@ -303,12 +303,18 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
     voice_id = payload.voice_id
     model_id = payload.model_id
     persona = (payload.persona or "").strip().lower()
+    req_lang = (payload.language or "").strip().lower()
 
     # Detect whether the text contains Arabic script
     import re
     arabic_chars = len(re.findall(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", text))
     latin_chars = len(re.findall(r"[a-zA-Z]", text))
-    is_arabic_text = arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)
+    if req_lang == "arabic":
+        is_arabic_text = True
+    elif req_lang == "english":
+        is_arabic_text = False
+    else:
+        is_arabic_text = arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)
 
     if persona == "gwen":
         # Gwen is 100% the Female AI (ElevenLabs Sarah voice)

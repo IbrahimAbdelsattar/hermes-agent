@@ -46,7 +46,7 @@ import {
 
 interface JarvisCoreWidgetProps {
   biometrics?: BiometricTelemetry;
-  onSendMessage?: (text: string) => Promise<string>;
+  onSendMessage?: (text: string, onDelta?: (partial: string) => void) => Promise<string>;
 }
 
 const DEFAULT_BIOMETRICS: BiometricTelemetry = {
@@ -294,8 +294,24 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       if (cached) {
         replyContent = cached.replyText;
       } else if (onSendMessage) {
-        // Send via Hermes Gateway
-        replyContent = await onSendMessage(textToSend);
+        // Send via Hermes Gateway (same mechanism as hermes chat: raw text +
+        // surface voice-live; backend injects the concise voice note). Stream
+        // deltas into a live bubble so the first token paints immediately.
+        const streamingId = `j-stream-${Date.now()}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: streamingId,
+            sender: 'jarvis',
+            content: '',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+        replyContent = await onSendMessage(textToSend, (partial) => {
+          setMessages((prev) => prev.map((m) => (m.id === streamingId ? { ...m, content: partial } : m)));
+        });
+        // Replace the streaming placeholder with the authoritative reply.
+        setMessages((prev) => prev.filter((m) => m.id !== streamingId));
         cacheEngine.setCachedAnswer('jarvis_chief', textToSend, replyContent);
       } else {
         // Fallback realistic response grounded in Ibrahim's stack
