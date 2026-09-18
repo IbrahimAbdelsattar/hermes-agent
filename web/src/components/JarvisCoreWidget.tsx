@@ -34,6 +34,12 @@ import {
   speakWithNabra,
   stopNabraAudio,
 } from '@/utils/jarvisSpeechUtils';
+import {
+  cleanSpokenText,
+  extractNextSpokenSentence,
+  PipelinedAudioQueue,
+  sanitizeTextForSpeech,
+} from '@/lib/speechUtils';
 import { cacheEngine } from '@/utils/jarvisCacheManager';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { JarvisNetworkGraph, type GraphNode } from '@/components/JarvisNetworkGraph';
@@ -175,10 +181,27 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
     scrollToBottom();
   }, [messages, isLoading]);
 
+  const activeAudioQueueRef = useRef<PipelinedAudioQueue | null>(null);
+
+  useEffect(() => {
+    if (!isSpeechEnabled) {
+      activeAudioQueueRef.current?.abort();
+      stopNabraAudio();
+    }
+  }, [isSpeechEnabled]);
+
+  useEffect(() => {
+    return () => {
+      activeAudioQueueRef.current?.abort();
+      stopNabraAudio();
+    };
+  }, []);
+
   const speakText = async (text: string) => {
     if (!isSpeechEnabled) return;
+    activeAudioQueueRef.current?.abort();
     stopNabraAudio();
-    await speakWithNabra(text);
+    await speakWithNabra(text, 'jarvis');
   };
 
   // Pomodoro Timer Countdown
@@ -307,12 +330,48 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
         ]);
+
+        let spokenCharIndex = 0;
+        const audioQueue = isSpeechEnabled ? new PipelinedAudioQueue() : null;
+        if (audioQueue) {
+          activeAudioQueueRef.current?.abort();
+          activeAudioQueueRef.current = audioQueue;
+        }
+
         replyContent = await onSendMessage(textToSend, (partial) => {
           setMessages((prev) => prev.map((m) => (m.id === streamingId ? { ...m, content: partial } : m)));
+
+          if (audioQueue && isSpeechEnabled) {
+            const clean = cleanSpokenText(partial);
+            while (true) {
+              const res = extractNextSpokenSentence(clean, spokenCharIndex);
+              if (!res) break;
+              spokenCharIndex = res.nextIndex;
+              const sentence = sanitizeTextForSpeech(res.sentence);
+              if (sentence.length >= 2) {
+                audioQueue.enqueue(async (signal) => {
+                  if (signal.aborted) return;
+                  await speakWithNabra(sentence, 'jarvis');
+                });
+              }
+            }
+          }
         });
         // Replace the streaming placeholder with the authoritative reply.
         setMessages((prev) => prev.filter((m) => m.id !== streamingId));
         cacheEngine.setCachedAnswer('jarvis_chief', textToSend, replyContent);
+
+        // Enqueue remaining un-spoken text
+        if (audioQueue && isSpeechEnabled) {
+          const finalClean = cleanSpokenText(replyContent);
+          const remainder = sanitizeTextForSpeech(finalClean.slice(spokenCharIndex));
+          if (remainder.length >= 2) {
+            audioQueue.enqueue(async (signal) => {
+              if (signal.aborted) return;
+              await speakWithNabra(remainder, 'jarvis');
+            });
+          }
+        }
       } else {
         // Fallback realistic response grounded in Ibrahim's stack
         await new Promise((r) => setTimeout(r, 900));
@@ -330,7 +389,9 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       };
 
       setMessages((prev) => [...prev, jarvisReply]);
-      if (isSpeechEnabled) {
+      // If onSendMessage was used with audioQueue, speech already started playing in real-time!
+      // Only speak whole reply if cached or fallback
+      if (isSpeechEnabled && (!onSendMessage || cached)) {
         void speakText(replyContent);
       }
     } catch (err: any) {

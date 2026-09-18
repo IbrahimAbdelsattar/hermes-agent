@@ -1,4 +1,5 @@
 import { authedFetch } from "@/lib/api";
+import { getVoicesSafely, pickArabicVoice, pickEnglishVoice } from "@/lib/speechUtils";
 
 export const sanitizeTextForSpeech = (text: string): string => {
   if (!text) return '';
@@ -68,24 +69,52 @@ export const stopNabraAudio = (): void => {
   }
 };
 
-export const speakWithNabra = async (text: string): Promise<void> => {
+export const speakWithNabra = async (
+  text: string,
+  persona: 'jarvis' | 'gwen' = 'jarvis'
+): Promise<void> => {
   const clean = sanitizeTextForSpeech(text);
   if (!clean || typeof window === 'undefined') return;
   stopNabraAudio();
 
   const isAr = /[\u0600-\u06FF]/.test(clean);
 
-  // Tier 1: Try Hermes Audio backend (/api/audio/speak)
+  // Fast path for Jarvis: Browser Web SpeechSynthesis API gives instant (<50ms) natural speech
+  if (persona === 'jarvis' && 'speechSynthesis' in window) {
+    try {
+      const voices = await getVoicesSafely();
+      const voice = isAr
+        ? pickArabicVoice(voices, 'jarvis')
+        : pickEnglishVoice(voices, 'jarvis');
+
+      await new Promise<void>((resolve) => {
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.lang = isAr ? 'ar-EG' : 'en-US';
+        utter.rate = 1.05;
+        utter.pitch = 0.95;
+        if (voice) utter.voice = voice;
+        utter.onend = () => resolve();
+        utter.onerror = () => resolve();
+        window.speechSynthesis.speak(utter);
+        setTimeout(resolve, 25000);
+      });
+      return;
+    } catch (e) {
+      console.warn('Browser speech instant path notice:', e);
+    }
+  }
+
+  // Tier 2: Try Hermes Audio backend (/api/audio/speak)
   try {
     const res = await authedFetch('/api/audio/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: clean,
-        persona: isAr ? 'gwen' : 'jarvis',
-        provider: isAr ? 'elevenlabs' : undefined,
-        voice_id: isAr ? 'EXAVITQu4vr4xnSDxMaL' : undefined,
-        model_id: isAr ? 'eleven_multilingual_v2' : undefined,
+        persona,
+        provider: persona === 'gwen' ? 'elevenlabs' : 'edge',
+        voice_id: persona === 'gwen' ? 'EXAVITQu4vr4xnSDxMaL' : (isAr ? 'ar-EG-ShakirNeural' : 'en-US-GuyNeural'),
+        model_id: persona === 'gwen' ? 'eleven_multilingual_v2' : undefined,
       }),
     });
 
@@ -111,17 +140,24 @@ export const speakWithNabra = async (text: string): Promise<void> => {
     console.warn('Backend audio synthesis unavailable:', err);
   }
 
-  // Tier 2: Browser Web SpeechSynthesis API fallback (STRICTLY FOR ENGLISH ONLY - Never female/Arabic)
-  if (!isAr && 'speechSynthesis' in window) {
-    await new Promise<void>((resolve) => {
-      const utter = new SpeechSynthesisUtterance(clean);
-      utter.lang = 'en-US';
-      utter.rate = 1.05;
-      utter.pitch = 0.95;
-      utter.onend = () => resolve();
-      utter.onerror = () => resolve();
-      window.speechSynthesis.speak(utter);
-      setTimeout(resolve, 20000);
-    });
+  // Tier 3: Browser fallback if backend was unavailable
+  if ('speechSynthesis' in window) {
+    try {
+      const voices = await getVoicesSafely();
+      const voice = isAr
+        ? pickArabicVoice(voices, persona)
+        : pickEnglishVoice(voices, persona);
+      await new Promise<void>((resolve) => {
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.lang = isAr ? 'ar-EG' : 'en-US';
+        utter.rate = 1.05;
+        utter.pitch = 0.95;
+        if (voice) utter.voice = voice;
+        utter.onend = () => resolve();
+        utter.onerror = () => resolve();
+        window.speechSynthesis.speak(utter);
+        setTimeout(resolve, 20000);
+      });
+    } catch {}
   }
 };

@@ -25,7 +25,7 @@ export function getSharedAudioContext(): AudioContext | null {
  */
 export function playKnockSound(): void {
   const ctx = getSharedAudioContext();
-  if (!ctx) return;
+  if (!ctx || typeof ctx.createOscillator !== 'function' || typeof ctx.createGain !== 'function') return;
 
   const now = ctx.currentTime;
 
@@ -67,7 +67,7 @@ export function playKnockSound(): void {
  */
 export function playArcReactorBootSound(): void {
   const ctx = getSharedAudioContext();
-  if (!ctx) return;
+  if (!ctx || typeof ctx.createOscillator !== 'function' || typeof ctx.createGain !== 'function') return;
 
   const now = ctx.currentTime;
   const duration = 0.95;
@@ -97,17 +97,16 @@ export function playArcReactorBootSound(): void {
   osc1.start(now);
   osc1.stop(now + duration);
 
-  // Secondary harmonic shimmer oscillator (crystalline sine)
+  // Secondary high crystal harmonic shimmer
   const osc2 = ctx.createOscillator();
   const gain2 = ctx.createGain();
 
   osc2.type = 'sine';
-  osc2.frequency.setValueAtTime(320, now + 0.15);
-  osc2.frequency.exponentialRampToValueAtTime(1160, now + duration * 0.9);
+  osc2.frequency.setValueAtTime(880, now + 0.15);
+  osc2.frequency.exponentialRampToValueAtTime(1760, now + duration);
 
-  gain2.gain.setValueAtTime(0.001, now);
   gain2.gain.setValueAtTime(0.001, now + 0.15);
-  gain2.gain.linearRampToValueAtTime(0.25, now + 0.4);
+  gain2.gain.linearRampToValueAtTime(0.18, now + 0.35);
   gain2.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
   osc2.connect(gain2);
@@ -123,7 +122,7 @@ export function playArcReactorBootSound(): void {
  */
 export function playWakeChime(): void {
   const ctx = getSharedAudioContext();
-  if (!ctx) return;
+  if (!ctx || typeof ctx.createOscillator !== 'function' || typeof ctx.createGain !== 'function') return;
 
   const now = ctx.currentTime;
 
@@ -155,7 +154,7 @@ export function playWakeChime(): void {
  */
 export function playStandbyChime(): void {
   const ctx = getSharedAudioContext();
-  if (!ctx) return;
+  if (!ctx || typeof ctx.createOscillator !== 'function' || typeof ctx.createGain !== 'function') return;
 
   const now = ctx.currentTime;
 

@@ -161,4 +161,27 @@ describe("LiveVoiceCallWidget", () => {
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled();
     expect(container.textContent).toContain("End Call");
   });
+
+  it("renders audio latency mode controls and toggles between Instant and Studio Voice", async () => {
+    await act(async () => {
+      root.render(<LiveVoiceCallWidget />);
+    });
+
+    expect(container.textContent).toContain("Instant Speech");
+    expect(container.textContent).toContain("Studio Voice");
+    expect(container.textContent).toContain("TTS: Instant (<1s)");
+
+    const studioBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Studio Voice")
+    );
+    expect(studioBtn).toBeDefined();
+
+    await act(async () => {
+      studioBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(studioBtn?.className).toContain("bg-[#00f0ff]/20");
+    expect(container.textContent).toContain("TTS: Pipelined");
+  });
 });
+
