@@ -524,3 +524,11 @@ class _PluginProvidersPutBody(BaseModel):
 class _PluginVisibilityBody(BaseModel):
     hidden: bool
 
+
+class YouTubePlayRequest(BaseModel):
+    query: Optional[str] = None
+    video_id: Optional[str] = None
+    open_browser: bool = True
+    autoplay: bool = True
+
+

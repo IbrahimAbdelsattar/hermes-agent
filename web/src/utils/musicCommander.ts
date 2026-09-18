@@ -3,19 +3,22 @@ import type { MusicTrack } from '@/types/jarvis';
 export interface MusicCommandAction {
   action: 'play' | 'pause' | 'resume' | 'next' | 'prev';
   query?: string;
+  isYouTube?: boolean;
 }
 
 export function parseMusicCommand(raw: string): MusicCommandAction | null {
   if (!raw) return null;
   let t = raw.trim();
 
-  // Strip leading polite prefixes and conversational openers
-  t = t.replace(/^(?:hey|hi|hello|ok|okay|please|can you|could you|would you|i want you to)\s+/i, '');
-  // Strip wake words and names (Jarvis, Gwen, etc.)
-  t = t.replace(/^(?:يا\s*)?(?:جارفيس|جوين|jarvis|gwen|bot|sentinel)\s*[,،:\s-]*/i, '');
-  // Strip Arabic conversational polite prefixes
-  t = t.replace(/^(?:من فضلك|لو سمحت|بالله عليك|ممكن|ياريت|بقولك|عاوزك|عايزك|اسمع|يلا)\s+/i, '');
-  t = t.trim();
+  // Strip leading polite prefixes, wake words, and conversational openers iteratively
+  let prev = '';
+  while (prev !== t) {
+    prev = t;
+    t = t.replace(/^(?:hey|hi|hello|ok|okay|please|can you|could you|would you|i want you to)\s+/i, '');
+    t = t.replace(/^(?:يا\s*)?(?:جارفيس|جوين|jarvis|gwen|bot|sentinel)\s*[,،:\s-]*/i, '');
+    t = t.replace(/^(?:من فضلك|لو سمحت|بالله عليك|ممكن|ياريت|بقولك|عاوزك|عايزك|اسمع|يلا)\s+/i, '');
+    t = t.trim();
+  }
 
   // Pause / Stop
   if (
@@ -46,18 +49,35 @@ export function parseMusicCommand(raw: string): MusicCommandAction | null {
     return { action: 'prev' };
   }
 
-  // Play: شغل كذا / play ... / سمعني كذا / عايز اسمع كذا
-  const playMatch = t.match(/^(?:شغل|شغلي|شغللي|شغللنا|عايز اسمع|عايز أسمع|عاوز اسمع|عاوز أسمع|نفسي اسمع|سمعني|play|start)\s+(.+)$/i);
+  // Check for YouTube intent
+  const hasYouTubeKeyword =
+    /(?:from|on|in|via)\s+youtube/i.test(t) ||
+    /youtube\s+(?:video|music|song|track)?/i.test(t) ||
+    /(?:من|على|في|عبر)\s+(?:اليوتيوب|يوتيوب)/i.test(t) ||
+    /(?:اليوتيوب|يوتيوب)/i.test(t);
+
+  // Play: شغل كذا / play ... / سمعني كذا / عايز اسمع كذا / افتح يوتيوب وشغل كذا
+  const playMatch = t.match(/^(?:شغل|شغلي|شغللي|شغللنا|عايز اسمع|عايز أسمع|عاوز اسمع|عاوز أسمع|نفسي اسمع|سمعني|افتح|play|start|open)\s+(.+)$/i);
   if (playMatch && playMatch[1]) {
     let q = playMatch[1].trim();
-    q = q.replace(/^(?:اغنية|أغنية|تراك|موسيقى|ميوزك|ميوزيك|أغاني|اغاني|song|music|the song|the track|some music|some songs)\s+/i, '').trim();
-    q = q.replace(/\s+(?:اغنية|أغنية|تراك|موسيقى|ميوزك|ميوزيك|أغاني|اغاني|song|music|the song|the track|soundtrack|theme)$/i, '').trim();
-    return { action: 'play', query: q };
+
+    // Strip "يوتيوب وشغل" / "youtube and play"
+    q = q.replace(/^(?:اليوتيوب|يوتيوب|youtube)\s+(?:و\s*)?(?:شغل|شغلي|play|start)\s+/i, '').trim();
+
+    q = q.replace(/^(?:اغنية|أغنية|تراك|موسيقى|ميوزك|ميوزيك|أغاني|اغاني|فيديو|video|song|music|the song|the track|some music|some songs)\s+/i, '').trim();
+    q = q.replace(/\s+(?:اغنية|أغنية|تراك|موسيقى|ميوزك|ميوزيك|أغاني|اغاني|فيديو|video|song|music|the song|the track|soundtrack|theme)$/i, '').trim();
+
+    // Strip "from youtube" / "من يوتيوب" from query body
+    q = q.replace(/\s*(?:from|on|via)\s+youtube\s*/gi, ' ').trim();
+    q = q.replace(/\s*(?:من|على|في|عبر)\s+(?:اليوتيوب|يوتيوب)\s*/gi, ' ').trim();
+    q = q.replace(/\s*(?:اليوتيوب|يوتيوب|youtube)\s*/gi, ' ').trim();
+
+    return { action: 'play', query: q, isYouTube: hasYouTubeKeyword };
   }
 
   // General play intent if just "play" or "شغل"
   if (/^(?:شغل|play|play music|شغل موسيقى|شغل ميوزك)$/i.test(t)) {
-    return { action: 'play', query: '' };
+    return { action: 'play', query: '', isYouTube: false };
   }
 
   return null;

@@ -16,6 +16,8 @@ import {
   Search,
   Sparkles,
   ShieldAlert,
+  ExternalLink,
+  Youtube,
 } from 'lucide-react';
 import { apiFetch } from '@/utils/jarvisApiClient';
 import type { MusicTrack, MusicCommand } from '@/types/jarvis';
@@ -25,11 +27,13 @@ export interface MusicPlayerWidgetProps {
   command?: MusicCommand | null;
 }
 
-export type MusicCategory = 'all' | 'hamza' | 'ironman' | 'billie' | 'cyber';
+export type MusicCategory = 'all' | 'youtube' | 'hamza' | 'ironman' | 'billie' | 'cyber';
 
 export interface EnrichedMusicTrack extends MusicTrack {
-  category?: 'hamza' | 'ironman' | 'billie' | 'cyber';
+  category?: 'youtube' | 'hamza' | 'ironman' | 'billie' | 'cyber';
   badge?: string;
+  youtubeId?: string;
+  thumbnail?: string;
 }
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -105,6 +109,32 @@ class CyberSynthEngine {
 }
 
 export const DEFAULT_DEMO_TRACKS: EnrichedMusicTrack[] = [
+  // === YouTube Live Streaming (تشغيل يوتيوب المباشر) ===
+  {
+    id: 'yt-ironman-back-in-black',
+    title: 'Back In Black (Iron Man Theme - AC/DC)',
+    artist: 'AC/DC - Marvel Studios Iron Man',
+    duration: 254,
+    path: 'https://www.youtube.com/watch?v=IyR25B-IGyg',
+    sizeBytes: 0,
+    category: 'youtube',
+    badge: 'YOUTUBE LIVE',
+    youtubeId: 'IyR25B-IGyg',
+    thumbnail: 'https://i.ytimg.com/vi/IyR25B-IGyg/hqdefault.jpg',
+  },
+  {
+    id: 'yt-ironman-driving-with-the-top-down',
+    title: 'Driving With The Top Down (Iron Man Theme)',
+    artist: 'Ramin Djawadi (Iron Man Original Score)',
+    duration: 190,
+    path: 'https://www.youtube.com/watch?v=jNo3zmhXE9Y',
+    sizeBytes: 0,
+    category: 'youtube',
+    badge: 'YOUTUBE LIVE',
+    youtubeId: 'jNo3zmhXE9Y',
+    thumbnail: 'https://i.ytimg.com/vi/jNo3zmhXE9Y/hqdefault.jpg',
+  },
+
   // === حمزة نمرة (Hamza Namira) ===
   {
     id: 'hamza-fady-shewaya',
@@ -282,6 +312,8 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSearchingYoutube, setIsSearchingYoutube] = useState(false);
+  const [youtubeSearchInput, setYoutubeSearchInput] = useState('');
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const synthRef = useRef<CyberSynthEngine>(new CyberSynthEngine());
@@ -333,7 +365,20 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
       setIsPlaying(false);
     } else {
       // Play
-      if (currentTrack.path === 'synthetic-ambient') {
+      if (currentTrack.category === 'youtube' || currentTrack.youtubeId) {
+        setIsPlaying(true);
+        timerRef.current = setInterval(() => {
+          setCurrentTime((prev) => {
+            const next = prev + 1;
+            if (next >= (currentTrack.duration || 240)) {
+              if (isRepeat) return 0;
+              playNext();
+              return 0;
+            }
+            return next;
+          });
+        }, 1000);
+      } else if (currentTrack.path === 'synthetic-ambient') {
         synthRef.current.start(isMuted ? 0 : volume);
         timerRef.current = setInterval(() => {
           setCurrentTime((prev) => {
@@ -380,7 +425,23 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
       setDuration(track.duration || 180);
       setError(null);
 
-      if (track.path === 'synthetic-ambient') {
+      if (track.category === 'youtube' || track.youtubeId) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        setIsPlaying(true);
+        timerRef.current = setInterval(() => {
+          setCurrentTime((prev) => {
+            const next = prev + 1;
+            if (next >= (track.duration || 240)) {
+              if (isRepeat) return 0;
+              playNext();
+              return 0;
+            }
+            return next;
+          });
+        }, 1000);
+      } else if (track.path === 'synthetic-ambient') {
         synthRef.current.start(isMuted ? 0 : volume);
         timerRef.current = setInterval(() => {
           setCurrentTime((prev) => {
@@ -422,6 +483,61 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
     const prev = (currentIndex - 1 + tracks.length) % tracks.length;
     playTrackAt(prev);
   }, [tracks.length, currentIndex, playTrackAt]);
+
+  const searchAndPlayYoutube = useCallback(
+    async (query: string, openBrowser = false) => {
+      const q = (query || '').trim();
+      if (!q) return;
+      setIsSearchingYoutube(true);
+      setError(null);
+      try {
+        const res = await apiFetch(`/api/youtube/search?q=${encodeURIComponent(q)}&limit=5`);
+        if (!res.ok) throw new Error(`Search failed: HTTP ${res.status}`);
+        const data = await res.json();
+        const results = Array.isArray(data?.results) ? data.results : [];
+        if (results.length === 0 || results[0].error) {
+          throw new Error(results[0]?.error || 'No YouTube results found');
+        }
+
+        const top = results[0];
+        const newTrack: EnrichedMusicTrack = {
+          id: `youtube-${top.id}-${Date.now()}`,
+          title: top.title || q,
+          artist: top.channel || 'YouTube',
+          duration: 240,
+          path: top.url || `https://www.youtube.com/watch?v=${top.id}`,
+          sizeBytes: 0,
+          category: 'youtube',
+          badge: 'YOUTUBE LIVE',
+          youtubeId: top.id,
+          thumbnail: top.thumbnail,
+        };
+
+        setTracks((prev) => [newTrack, ...prev.filter((t) => t.youtubeId !== top.id)]);
+        setCurrentIndex(0);
+        setCurrentTime(0);
+        setDuration(240);
+        setIsPlaying(true);
+        setSelectedCategory('youtube');
+
+        if (openBrowser) {
+          void apiFetch('/api/youtube/play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_id: top.id, open_browser: true }),
+          });
+        }
+      } catch (err: any) {
+        console.warn('[jarvis:youtube] Playback error:', err);
+        setError(`YouTube Error: ${err.message || 'Playback failed'}`);
+        const fallbackIdx = findBestTrackIndex(q, tracks);
+        playTrackAt(fallbackIdx);
+      } finally {
+        setIsSearchingYoutube(false);
+      }
+    },
+    [tracks, playTrackAt]
+  );
 
   useEffect(() => {
     synthRef.current.setVolume(isMuted ? 0 : volume);
@@ -469,8 +585,17 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
       } else if (detail.action === 'prev') {
         playPrev();
       } else if (detail.action === 'play') {
-        const targetIdx = findBestTrackIndex(detail.query || '', tracks);
-        playTrackAt(targetIdx);
+        if (detail.isYouTube && detail.query) {
+          void searchAndPlayYoutube(detail.query);
+        } else {
+          const q = (detail.query || '').trim();
+          if (/youtube|يوتيوب/i.test(q)) {
+            void searchAndPlayYoutube(q);
+          } else {
+            const targetIdx = findBestTrackIndex(q, tracks);
+            playTrackAt(targetIdx);
+          }
+        }
       }
     };
 
@@ -478,14 +603,19 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
     return () => {
       window.removeEventListener('jarvis:music:command', handleMusicCommand);
     };
-  }, [tracks, isPlaying, togglePlay, playNext, playPrev, playTrackAt]);
+  }, [tracks, isPlaying, togglePlay, playNext, playPrev, playTrackAt, searchAndPlayYoutube]);
 
   // React to prop command if passed
   useEffect(() => {
     if (!command?.request) return;
-    const targetIdx = findBestTrackIndex(command.request, tracks);
-    playTrackAt(targetIdx);
-  }, [command, tracks, playTrackAt]);
+    const req = command.request.trim();
+    if (/youtube|يوتيوب/i.test(req)) {
+      void searchAndPlayYoutube(req);
+    } else {
+      const targetIdx = findBestTrackIndex(req, tracks);
+      playTrackAt(targetIdx);
+    }
+  }, [command, tracks, playTrackAt, searchAndPlayYoutube]);
 
   // Filtered tracks by category and search
   const filteredTracks = useMemo(() => {
@@ -543,13 +673,49 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
           </div>
         </div>
 
-        {/* Search & Upload Action */}
-        <div className="flex items-center gap-2 flex-1 max-w-md justify-end">
-          <div className="relative flex-1 max-w-[200px]">
+        {/* Search, YouTube & Upload Actions */}
+        <div className="flex items-center gap-2 flex-1 max-w-2xl justify-end flex-wrap">
+          {/* Direct YouTube Search Bar */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (youtubeSearchInput.trim()) {
+                void searchAndPlayYoutube(youtubeSearchInput.trim());
+                setYoutubeSearchInput('');
+              }
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <div className="relative">
+              <Youtube className="size-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-red-500" />
+              <input
+                type="text"
+                placeholder="Search & play YouTube..."
+                value={youtubeSearchInput}
+                onChange={(e) => setYoutubeSearchInput(e.target.value)}
+                className="w-[130px] sm:w-[180px] pl-7 pr-2 py-1 bg-[#020b14] border border-red-500/30 rounded-lg text-slate-100 placeholder:text-red-400/40 focus:outline-none focus:border-red-500 text-[11px]"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isSearchingYoutube || !youtubeSearchInput.trim()}
+              className="px-2.5 py-1 rounded bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 flex items-center gap-1 text-[11px] font-bold transition-all shrink-0 disabled:opacity-40"
+              title="Search and play YouTube video immediately"
+            >
+              {isSearchingYoutube ? (
+                <Sparkles className="size-3 animate-spin text-amber-400" />
+              ) : (
+                <Play className="size-3" />
+              )}
+              <span className="hidden sm:inline">Play YT</span>
+            </button>
+          </form>
+
+          <div className="relative flex-1 max-w-[140px]">
             <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-cyan-400/50" />
             <input
               type="text"
-              placeholder="Search library..."
+              placeholder="Filter library..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-8 pr-2.5 py-1 bg-[#020b14] border border-[#00f0ff]/25 rounded-lg text-slate-100 placeholder:text-cyan-400/40 focus:outline-none focus:border-[#00f0ff] text-[11px]"
@@ -587,14 +753,15 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
           All Tracks ({tracks.length})
         </button>
         <button
-          onClick={() => setSelectedCategory('hamza')}
-          className={`px-2.5 py-1 rounded-md text-[11px] transition-all shrink-0 ${
-            selectedCategory === 'hamza'
-              ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40 font-bold shadow-[0_0_10px_rgba(251,191,36,0.2)]'
-              : 'text-slate-400 hover:text-amber-300 border border-transparent'
+          onClick={() => setSelectedCategory('youtube')}
+          className={`px-2.5 py-1 rounded-md text-[11px] transition-all shrink-0 flex items-center gap-1.5 ${
+            selectedCategory === 'youtube'
+              ? 'bg-red-600/25 text-red-300 border border-red-500/50 font-bold shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+              : 'text-slate-400 hover:text-red-300 border border-transparent'
           }`}
         >
-          حمزة نمرة (Hamza Namira)
+          <Youtube className="size-3 text-red-500" />
+          YouTube ({tracks.filter((t) => t.category === 'youtube' || t.youtubeId).length})
         </button>
         <button
           onClick={() => setSelectedCategory('ironman')}
@@ -607,10 +774,20 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
           Iron Man & JARVIS
         </button>
         <button
+          onClick={() => setSelectedCategory('hamza')}
+          className={`px-2.5 py-1 rounded-md text-[11px] transition-all shrink-0 ${
+            selectedCategory === 'hamza'
+              ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40 font-bold shadow-[0_0_10px_rgba(251,191,36,0.2)]'
+              : 'text-slate-400 hover:text-amber-300 border border-transparent'
+          }`}
+        >
+          حمزة نمرة (Hamza Namira)
+        </button>
+        <button
           onClick={() => setSelectedCategory('billie')}
           className={`px-2.5 py-1 rounded-md text-[11px] transition-all shrink-0 ${
             selectedCategory === 'billie'
-              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold shadow-[0_0_10px_rgba(168,85,247,0.2)]'
               : 'text-slate-400 hover:text-emerald-300 border border-transparent'
           }`}
         >
@@ -631,37 +808,71 @@ export const MusicPlayerWidget: React.FC<MusicPlayerWidgetProps> = ({ command })
       {/* Now Playing Banner */}
       <div className="p-4 bg-[#051424]/90 border-b border-[#00f0ff]/15">
         {currentTrack ? (
-          <div className="flex items-center gap-3">
-            <div className="size-14 rounded-xl bg-[#071d33] border border-[#00f0ff]/40 flex items-center justify-center text-[#00f0ff] shrink-0 shadow-[0_0_15px_rgba(0,240,255,0.25)] relative overflow-hidden">
-              <Disc3
-                className={`size-8 ${isPlaying ? 'animate-spin' : ''}`}
-                style={{ animationDuration: '4s' }}
-              />
-              {isPlaying && (
-                <div className="absolute inset-0 rounded-xl border border-cyan-400/50 animate-ping pointer-events-none opacity-40" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-bold text-cyan-100 truncate">{currentTrack.title}</p>
-                {currentTrack.badge && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/30 font-bold shrink-0">
-                    {currentTrack.badge}
-                  </span>
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="size-14 rounded-xl bg-[#071d33] border border-[#00f0ff]/40 flex items-center justify-center text-[#00f0ff] shrink-0 shadow-[0_0_15px_rgba(0,240,255,0.25)] relative overflow-hidden">
+                {currentTrack.thumbnail ? (
+                  <img
+                    src={currentTrack.thumbnail}
+                    alt={currentTrack.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <Disc3
+                    className={`size-8 ${isPlaying ? 'animate-spin' : ''}`}
+                    style={{ animationDuration: '4s' }}
+                  />
+                )}
+                {isPlaying && (
+                  <div className="absolute inset-0 rounded-xl border border-cyan-400/50 animate-ping pointer-events-none opacity-40" />
                 )}
               </div>
-              <p className="text-[11px] text-cyan-400/60 truncate flex items-center gap-1 mt-0.5">
-                <Radio className="size-3 text-amber-400" /> {currentTrack.artist}
-              </p>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-bold text-cyan-100 truncate">{currentTrack.title}</p>
+                  {currentTrack.badge && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/30 font-bold shrink-0">
+                      {currentTrack.badge}
+                    </span>
+                  )}
+                  {currentTrack.youtubeId && (
+                    <a
+                      href={currentTrack.path}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] px-2 py-0.5 rounded bg-red-600/20 hover:bg-red-600/35 text-red-300 border border-red-500/40 font-bold shrink-0 flex items-center gap-1 transition-all"
+                      title="Open video in YouTube"
+                    >
+                      <ExternalLink className="size-2.5" /> Watch on YouTube
+                    </a>
+                  )}
+                </div>
+                <p className="text-[11px] text-cyan-400/60 truncate flex items-center gap-1 mt-0.5">
+                  <Radio className="size-3 text-amber-400" /> {currentTrack.artist}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-xs text-amber-400 font-bold tabular-nums">
+                  {formatDuration(currentTime)}
+                </p>
+                <p className="text-[10px] text-cyan-400/50 tabular-nums">
+                  {formatDuration(duration ?? currentTrack.duration)}
+                </p>
+              </div>
             </div>
-            <div className="text-right shrink-0">
-              <p className="text-xs text-amber-400 font-bold tabular-nums">
-                {formatDuration(currentTime)}
-              </p>
-              <p className="text-[10px] text-cyan-400/50 tabular-nums">
-                {formatDuration(duration ?? currentTrack.duration)}
-              </p>
-            </div>
+
+            {/* Embedded YouTube Holographic Viewport when YouTube track is selected */}
+            {currentTrack.youtubeId && (
+              <div className="mt-3 relative w-full aspect-video max-h-[260px] bg-black rounded-lg overflow-hidden border border-red-500/40 shadow-[0_0_25px_rgba(239,68,68,0.25)]">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${currentTrack.youtubeId}?autoplay=1&enablejsapi=1`}
+                  title={currentTrack.title}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-xs text-cyan-400/50 py-2 text-center tracking-widest">NO TRACK SELECTED</p>

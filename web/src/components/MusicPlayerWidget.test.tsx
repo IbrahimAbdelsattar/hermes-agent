@@ -49,4 +49,15 @@ describe("MusicPlayerWidget", () => {
     const pauseBtn = container.querySelector("button[title='Pause']");
     expect(pauseBtn).toBeDefined();
   });
+
+  it("renders YouTube Live controls and search input", async () => {
+    await act(async () => {
+      root.render(<MusicPlayerWidget />);
+    });
+
+    expect(container.textContent).toContain("YouTube");
+    const ytInput = container.querySelector("input[placeholder='Search & play YouTube...']");
+    expect(ytInput).toBeDefined();
+  });
 });
+
