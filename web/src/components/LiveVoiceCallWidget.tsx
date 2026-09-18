@@ -30,6 +30,7 @@ import { JarvisUltronVoiceOrb, type OrbTheme } from './JarvisUltronVoiceOrb';
 import {
   detectLanguageContent,
   getVoicesSafely,
+  pickArabicVoice,
   pickEnglishVoice,
   sanitizeTextForSpeech,
   splitTextIntoSentences,
@@ -54,7 +55,7 @@ export interface CallMessage {
 
 export interface LiveVoiceCallWidgetProps {
   initialPersona?: VoicePersona;
-  onSendMessage?: (text: string, persona: VoicePersona) => Promise<string>;
+  onSendMessage?: (text: string, persona: VoicePersona, language?: CallLanguage) => Promise<string>;
   onClose?: () => void;
   activeSessionId?: string | null;
   activeSessionTitle?: string;
@@ -144,9 +145,18 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
   const languageRef = useRef<CallLanguage>('Arabic');
+  const personaRef = useRef<VoicePersona>(selectedPersona);
   const isSpeakingRef = useRef(false);
   const isProcessingRef = useRef(false);
   const speakerOnRef = useRef(speakerOn);
+
+  useEffect(() => {
+    personaRef.current = selectedPersona;
+  }, [selectedPersona]);
+
+  useEffect(() => {
+    languageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
   const silenceTimerRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
   const pauseDeadlineRef = useRef<number | null>(null);
@@ -299,15 +309,23 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const speakWithBrowser = useCallback(
     async (text: string): Promise<void> => {
       // Local female browser voice is PERMANENTLY PURGED.
-      // Under NO circumstances should browser speech play for Arabic or Gwen persona.
+      // Under NO circumstances should browser speech play for Gwen persona.
       const langResult = detectLanguageContent(text);
-      if (selectedPersona === 'gwen' || langResult.isArabicPredominant) {
-        console.warn('[VoiceSentinel] Browser speech cancelled: Arabic/Gwen exclusively uses ElevenLabs.');
+      if (selectedPersona === 'gwen') {
+        console.warn('[VoiceSentinel] Browser speech cancelled: Gwen exclusively uses ElevenLabs.');
         return;
       }
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       const voices = await getVoicesSafely();
-      const voice = pickEnglishVoice(voices, 'jarvis');
+      const isArabicSpeech = langResult.isArabicPredominant;
+      const voice = isArabicSpeech
+        ? pickArabicVoice(voices, 'jarvis')
+        : pickEnglishVoice(voices, 'jarvis');
+
+      if (isArabicSpeech && !voice) {
+        console.warn('[VoiceSentinel] No authentic male Arabic voice available in browser, skipping local fallback.');
+        return;
+      }
 
       const sentences = splitTextIntoSentences(text);
       if (sentences.length === 0) return;
@@ -317,7 +335,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
         await new Promise<void>((resolve) => {
           const utterance = new SpeechSynthesisUtterance(sentence);
-          utterance.lang = 'en-US';
+          utterance.lang = isArabicSpeech ? 'ar-EG' : 'en-US';
           utterance.rate = 1.02;
           utterance.pitch = 0.94;
           if (voice) utterance.voice = voice;
@@ -372,22 +390,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       setIsSpeaking(true);
       isSpeakingRef.current = true;
 
-      // Real-time language detection of the spoken content
-      const langAnalysis = detectLanguageContent(text);
-      const isArabicSpeech = langAnalysis.isArabicPredominant;
-
-      // User requirement:
-      // If speech is predominantly Arabic -> auto-steer to Gwen (ElevenLabs female voice)
-      // If speech is predominantly English -> auto-steer to Jarvis (English male voice)
-      const effectivePersona: VoicePersona = isArabicSpeech
-        ? 'gwen'
-        : (forcedPersona || (langAnalysis.isEnglishPredominant ? 'jarvis' : selectedPersona));
+      // Strictly obey the persona chosen by the user
+      const effectivePersona: VoicePersona = forcedPersona || personaRef.current || selectedPersona;
 
       setOrbTheme(effectivePersona === 'gwen' ? 'gwen' : 'jarvis');
       setMicStatus(
         effectivePersona === 'gwen'
-          ? 'Gwen (ElevenLabs Arabic) is speaking...'
-          : 'Jarvis is speaking...'
+          ? 'Gwen (ElevenLabs Female AI) is speaking...'
+          : 'Jarvis (Male AI) is speaking...'
       );
 
       try {
@@ -399,9 +409,6 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           body: JSON.stringify({
             text,
             persona: effectivePersona,
-            provider: effectivePersona === 'gwen' ? 'elevenlabs' : undefined,
-            voice_id: effectivePersona === 'gwen' ? 'EXAVITQu4vr4xnSDxMaL' : undefined,
-            model_id: effectivePersona === 'gwen' ? 'eleven_multilingual_v2' : undefined,
           }),
           signal: controller.signal,
         }).catch(() => null);
@@ -453,12 +460,12 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             return;
           }
         }
-        // Local female voice is completely purged! NEVER fallback to browser for Arabic or Gwen
-        if (effectivePersona !== 'gwen' && !isArabicSpeech) {
+        // If server synthesis fails, only fallback to browser synthesis if persona is Jarvis
+        if (effectivePersona === 'jarvis') {
           await speakWithBrowser(text);
         }
       } catch {
-        if (effectivePersona !== 'gwen' && !isArabicSpeech) {
+        if (effectivePersona === 'jarvis') {
           await speakWithBrowser(text);
         }
       } finally {
@@ -476,9 +483,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   const sendChatTurn = useCallback(
     async (text: string, sessionVersion: number, activePersona?: VoicePersona) => {
       let reply = '';
+      const personaToUse: VoicePersona = activePersona || personaRef.current || selectedPersona;
       const langResult = detectLanguageContent(text);
-      const isAr = langResult.isArabicPredominant;
-      const personaToUse: VoicePersona = activePersona || (isAr ? 'gwen' : selectedPersona);
+      const isAr =
+        languageRef.current === 'Arabic'
+          ? true
+          : languageRef.current === 'English'
+          ? false
+          : langResult.isArabicPredominant;
 
       const musicCmd = parseMusicCommand(text);
       if (musicCmd) {
@@ -515,11 +527,11 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
         // Notify backend session asynchronously so memory reflects the command
         if (onSendMessage) {
-          onSendMessage(text, personaToUse).catch(() => {});
+          onSendMessage(text, personaToUse, languageRef.current).catch(() => {});
         }
       } else if (onSendMessage) {
         try {
-          reply = await onSendMessage(text, personaToUse);
+          reply = await onSendMessage(text, personaToUse, languageRef.current);
         } catch (err) {
           console.warn('[voice] onSendMessage failed:', err);
           const errMsg = err instanceof Error ? err.message : String(err || 'Communication error');
@@ -548,15 +560,10 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       }
 
       if (sessionVersion !== sessionVersionRef.current || statusRef.current !== 'active') return;
-      const replyLang = detectLanguageContent(reply);
-      const assistantPersona: VoicePersona = replyLang.isArabicPredominant
-        ? 'gwen'
-        : (replyLang.isEnglishPredominant ? 'jarvis' : personaToUse);
+      const effectivePersona: VoicePersona = personaRef.current || personaToUse || selectedPersona;
 
-      setSelectedPersona(assistantPersona);
-      setOrbTheme(assistantPersona === 'gwen' ? 'gwen' : 'jarvis');
-      appendMessage('assistant', reply, assistantPersona);
-      await speak(reply, assistantPersona);
+      appendMessage('assistant', reply, effectivePersona);
+      await speak(reply, effectivePersona);
     },
     [appendMessage, onSendMessage, selectedPersona, speak]
   );
@@ -586,29 +593,25 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       stopRecognition();
       setInterimTranscript('');
 
-      // Auto-detect spoken language and dynamically steer persona and visual theme
+      // Language detection for display
       const langResult = detectLanguageContent(text);
-      const isAr = langResult.isArabicPredominant;
-      const isEn = langResult.isEnglishPredominant;
       setDetectedLanguage(langResult.detectedLanguage);
 
-      const targetPersona: VoicePersona = isAr ? 'gwen' : (isEn ? 'jarvis' : selectedPersona);
-      setSelectedPersona(targetPersona);
-      setOrbTheme(targetPersona === 'gwen' ? 'gwen' : 'jarvis');
+      const activePersona: VoicePersona = personaRef.current || selectedPersona;
 
       appendMessage('user', text);
 
       setIsProcessing(true);
       isProcessingRef.current = true;
       setMicStatus(
-        targetPersona === 'gwen'
+        activePersona === 'gwen'
           ? 'Gwen is analyzing your request...'
           : 'Jarvis is processing your request...'
       );
 
       const sessionVersion = sessionVersionRef.current;
       try {
-        await sendChatTurn(text, sessionVersion, targetPersona);
+        await sendChatTurn(text, sessionVersion, activePersona);
       } catch (error) {
         if (sessionVersion === sessionVersionRef.current && statusRef.current === 'active') {
           const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
@@ -796,12 +799,21 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     recognition.continuous = true;
     recognition.interimResults = true;
     const currentLang = languageRef.current;
-    recognition.lang = currentLang === 'English' ? 'en-US' : 'ar-EG';
+    if (currentLang === 'English') {
+      recognition.lang = 'en-US';
+    } else if (currentLang === 'Arabic') {
+      recognition.lang = 'ar-EG';
+    } else {
+      const navLang = typeof navigator !== 'undefined' ? (navigator.language || '') : '';
+      recognition.lang = navLang.startsWith('en') ? 'en-US' : 'ar-EG';
+    }
 
     recognition.onstart = () => {
       recognitionRunningRef.current = true;
       const lang = languageRef.current;
-      setRecognitionStatus(`Listening actively (${lang === 'English' ? 'English' : 'Arabic - مصرية'})`);
+      setRecognitionStatus(
+        `Listening actively (${lang === 'English' ? 'English' : lang === 'Arabic' ? 'Arabic - مصرية' : 'Auto - Adaptive'})`
+      );
       if (!isSpeakingRef.current && !isProcessingRef.current) {
         setMicStatus('Listening...');
       }
@@ -936,7 +948,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       if (!recognition) return;
 
       const currentLang = languageRef.current;
-      recognition.lang = currentLang === 'English' ? 'en-US' : 'ar-EG';
+      if (currentLang === 'English') {
+        recognition.lang = 'en-US';
+      } else if (currentLang === 'Arabic') {
+        recognition.lang = 'ar-EG';
+      } else {
+        const navLang = typeof navigator !== 'undefined' ? (navigator.language || '') : '';
+        recognition.lang = navLang.startsWith('en') ? 'en-US' : 'ar-EG';
+      }
       recognition.start();
       recognitionRunningRef.current = true;
     } catch (err: any) {
@@ -1213,6 +1232,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
                 languageRef.current = 'Arabic';
                 stopRecognition();
                 scheduleRearm(150);
+                setMicStatus('Language set to Arabic (Egypt)');
               }}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'Arabic'
@@ -1228,6 +1248,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
                 languageRef.current = 'English';
                 stopRecognition();
                 scheduleRearm(150);
+                setMicStatus('Language set to English (US)');
               }}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'English'
@@ -1243,6 +1264,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
                 languageRef.current = 'Auto';
                 stopRecognition();
                 scheduleRearm(150);
+                setMicStatus('Language set to Auto (Adaptive)');
               }}
               className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
                 selectedLanguage === 'Auto'
@@ -1258,8 +1280,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           <div className="flex bg-[#030712] border border-[#00f0ff]/30 rounded-lg p-1 text-xs">
             <button
               onClick={() => {
+                stopSpeaking();
                 setSelectedPersona('jarvis');
+                personaRef.current = 'jarvis';
                 setOrbTheme('jarvis');
+                setMicStatus('Switched to Jarvis (Male AI)');
+                if (statusRef.current === 'active' && !isProcessingRef.current) {
+                  scheduleRearm(200);
+                }
               }}
               className={`px-3 py-1 rounded-md font-semibold transition-all ${
                 selectedPersona === 'jarvis'
@@ -1271,8 +1299,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             </button>
             <button
               onClick={() => {
+                stopSpeaking();
                 setSelectedPersona('gwen');
+                personaRef.current = 'gwen';
                 setOrbTheme('gwen');
+                setMicStatus('Switched to Gwen (ElevenLabs Female AI)');
+                if (statusRef.current === 'active' && !isProcessingRef.current) {
+                  scheduleRearm(200);
+                }
               }}
               className={`px-3 py-1 rounded-md font-semibold transition-all ${
                 selectedPersona === 'gwen'

@@ -3,7 +3,7 @@ import { Mic, Bot, Music2, Globe, Sparkles, Disc3, Pause, SkipForward } from "lu
 import { useLocation, useNavigate } from "react-router";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";
-import { LiveVoiceCallWidget, type VoicePersona, type CallMessage } from "@/components/LiveVoiceCallWidget";
+import { LiveVoiceCallWidget, type VoicePersona, type CallMessage, type CallLanguage } from "@/components/LiveVoiceCallWidget";
 import { JarvisCoreWidget } from "@/components/JarvisCoreWidget";
 import { MusicPlayerWidget } from "@/components/MusicPlayerWidget";
 import { LiveWorldFeedWidget } from "@/components/LiveWorldFeedWidget";
@@ -360,7 +360,7 @@ export default function JarvisCallPage() {
   );
 
   const handleSendMessage = useCallback(
-    async (text: string, persona: VoicePersona = "jarvis"): Promise<string> => {
+    async (text: string, persona: VoicePersona = "jarvis", language: CallLanguage = "Arabic"): Promise<string> => {
       const gw = gatewayRef.current;
       if (!gw) {
         throw new Error("Gateway client not initialized");
@@ -379,33 +379,48 @@ export default function JarvisCallPage() {
         );
       }
 
-      const isAr = /[\u0600-\u06FF]/.test(text);
+      const isAr =
+        language === "Arabic"
+          ? true
+          : language === "English"
+          ? false
+          : /[\u0600-\u06FF]/.test(text);
       const musicNote = musicCmd ? ` [تم تشغيل الأمر الموسيقي "${musicCmd.action}" في النظام]` : "";
       const personaInstruction = isAr
-        ? `[تعليمات المكالمة الصوتية الحية: أنت في مكالمة صوتية مستمرة ولديك ذاكرة كاملة لجلساتنا السابقة ومشاريعنا المتفق عليها. إذا سأل المستخدم عن مشروع أو أمر تم الاتفاق عليه سابقاً، تذكره فوراً واستحضر تفاصيله واستمر عليه. لديك مشغل موسيقى حقيقي مدمج في النظام (JARVIS Audio Deck) يشغّل أغاني حمزة نمرة وتراكات أيرون مان وبيلي إيليش. إذا طلب المستخدم تشغيل أي أغنية أو موسيقى، أكد له تشغيلها فوراً كـ ${persona === 'gwen' ? 'جوين' : 'جارفيس'} ولا تقل أبداً أنك لا تستطيع تشغيل الموسيقى. أجب بإيجاز شديد في جملة أو جملتين فقط بلهجة مصرية مهذبة.${musicNote} ممنوع تماماً استخدام أي ماركداون أو رموز أو قوائم.] `
-        : `[VOICE CALL MODE: Continuous voice call with persistent memory. You recall all previous agreements, project details, and tasks discussed with the user. You have a real built-in JARVIS Audio Deck with Iron Man themes, Hamza Namira, and Billie Eilish tracks integrated directly into your system. If the user asks to play music, a song, or a soundtrack, enthusiastically confirm playback immediately as ${persona === 'gwen' ? 'Gwen' : 'Jarvis'} and NEVER claim you cannot play audio or stream music. Respond concisely in 1-2 spoken sentences only.${musicNote} Absolutely no markdown, no symbols, no bullet lists.] `;
+        ? `[تعليمات هيرميس إيجينت للمكالمة الصوتية الحية: أنت هيرميس إيجينت (Hermes Agent) المتقدم والذكي، وتعمل بواجهة ${persona === 'gwen' ? 'جوين (Gwen)' : 'جارفيس (Jarvis)'}. أنت متصل بالكامل وبشكل مباشر مع النواة المركزية لهيرميس وكافة أدوات وقدرات النظام (Hermes Tools & Capabilities) بما فيها: تنفيذ أوامر الترمينال والباش (terminal/bash)، فحص وتعديل الملفات (file tools)، البحث المباشر في الويب وتصفح الإنترنت (web_search & browser tools)، استدعاء وتشغيل المهارات (skills)، تنفيذ الأكواد (execute_code)، والمهام المجدولة وإدارة الذاكرة. إذا طلب المستخدم أي مهمة أو استعلام أو فحص أو أمر نظام أو كتابة كود أو بحث، استدعِ واستخدم أدواتك المتاحة فوراً كـ Hermes Agent ونفذ المطلوب بكل إمكانياتك وقدراتك. لديك أيضاً مشغل موسيقى حقيقي مدمج في النظام (JARVIS Audio Deck) يشغّل أغاني وتراكات؛ وإذا طُلب تشغيل موسيقى أكد التشغيل فوراً كـ ${persona === 'gwen' ? 'جوين' : 'جارفيس'}. لديك ذاكرة كاملة لجلساتنا السابقة ومشاريعنا المتفق عليها. أجب بإيجاز شديد في جملة أو جملتين فقط بالعامية المصرية الراقية بدون أي ماركداون أو رموز غير منطوقة.${musicNote}] `
+        : `[VOICE CALL MODE - HERMES AGENT: You are the advanced Hermes Agent operating through the ${persona === 'gwen' ? 'Gwen' : 'Jarvis'} interface. You are fully and directly connected to ALL Hermes tools and system capabilities: terminal & bash execution, file read/write/inspection, live web search & browser navigation, code execution, skills, cronjobs, task management, and persistent memory. If the user asks for any task, query, code execution, web search, or system command, proactively use your tools immediately as Hermes Agent and execute the task with all your capabilities. You also have a real built-in JARVIS Audio Deck; if music is requested, enthusiastically confirm playback immediately. You recall all previous agreements and memory. Respond concisely in 1-2 spoken sentences only, without any markdown or symbols.${musicNote}] `;
 
       return new Promise<string>((resolve, reject) => {
         let fullText = "";
         let settled = false;
 
+        let timeout: any = null;
+
         const cleanup = () => {
           settled = true;
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
           offDelta();
+          offStatus();
+          offTool();
           offComplete();
           offError();
         };
 
-        const timeout = setTimeout(() => {
+        const resetTimeout = (ms = 45000) => {
           if (settled) return;
-          cleanup();
-          if (fullText.trim()) {
-            resolve(fullText.trim());
-          } else {
-            reject(new Error("Voice response timed out"));
-          }
-        }, 45000);
+          if (timeout) clearTimeout(timeout);
+          timeout = setTimeout(() => {
+            if (settled) return;
+            cleanup();
+            if (fullText.trim()) {
+              resolve(fullText.trim());
+            } else {
+              reject(new Error("Voice response timed out"));
+            }
+          }, ms);
+        };
+
+        resetTimeout(45000);
 
         const matchSession = (evSid?: string) => {
           if (!evSid) return true;
@@ -415,6 +430,21 @@ export default function JarvisCallPage() {
         const offDelta = gw.on("message.delta", (ev) => {
           if (matchSession(ev.session_id) && ev.payload?.text) {
             fullText += ev.payload.text;
+            resetTimeout(35000);
+          }
+        });
+
+        const offStatus = gw.on("status.update", (ev) => {
+          if (matchSession(ev.session_id)) {
+            // Extend timeout when Hermes is executing tools or reasoning
+            resetTimeout(60000);
+          }
+        });
+
+        const offTool = gw.on("reasoning.delta", (ev) => {
+          if (matchSession(ev.session_id)) {
+            // Extend timeout when reasoning / tool activity arrives
+            resetTimeout(60000);
           }
         });
 
@@ -440,7 +470,11 @@ export default function JarvisCallPage() {
         });
 
         const submitPrompt = (sidToSubmit: string) => {
-          gw.request("prompt.submit", { session_id: sidToSubmit, text: `${personaInstruction}${text}` }).catch(
+          gw.request("prompt.submit", {
+            session_id: sidToSubmit,
+            text: `${personaInstruction}${text}`,
+            surface: "voice-live",
+          }).catch(
             async (err) => {
               if (settled) return;
               console.warn("[jarvis] prompt.submit error, checking recovery:", err);
@@ -455,6 +489,7 @@ export default function JarvisCallPage() {
                   await gw.request("prompt.submit", {
                     session_id: currentRuntimeSid,
                     text: `${personaInstruction}${text}`,
+                    surface: "voice-live",
                   });
                   return;
                 } catch (retryErr) {
@@ -567,7 +602,7 @@ return (
           onDeleteSession={handleDeleteSession}
           onRefreshSessions={refreshCallSessions}
           initialMessages={initialMessages}
-          onSendMessage={(txt, p) => handleSendMessage(txt, p)}
+          onSendMessage={(txt, p, lang) => handleSendMessage(txt, p, lang)}
         />
       </div>
 

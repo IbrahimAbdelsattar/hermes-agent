@@ -295,18 +295,34 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
     provider = payload.provider
     voice_id = payload.voice_id
     model_id = payload.model_id
+    persona = (payload.persona or "").strip().lower()
 
-    # Auto-detect language: if text is predominantly Arabic or Gwen is selected,
-    # route to ElevenLabs free multilingual model with Sarah female voice
+    # Detect whether the text contains Arabic script
     import re
     arabic_chars = len(re.findall(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", text))
     latin_chars = len(re.findall(r"[a-zA-Z]", text))
-    is_arabic = (arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)) or (payload.persona or "").lower() == "gwen"
+    is_arabic_text = arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)
 
-    if is_arabic or (voice_id or "").lower() == "gwen":
+    if persona == "gwen":
+        # Gwen is 100% the Female AI (ElevenLabs Sarah voice)
         provider = "elevenlabs"
-        voice_id = "EXAVITQu4vr4xnSDxMaL" if (not voice_id or voice_id.lower() == "gwen") else voice_id
-        model_id = model_id or "eleven_multilingual_v2"
+        voice_id = "EXAVITQu4vr4xnSDxMaL"
+        model_id = "eleven_multilingual_v2"
+    elif persona == "jarvis":
+        # Jarvis is 100% the MALE AI!
+        provider = "edge"
+        if is_arabic_text:
+            voice_id = "ar-EG-ShakirNeural"  # Authentic Egyptian Male voice
+        else:
+            voice_id = "en-US-GuyNeural"     # Distinctive English Male voice
+    else:
+        # If no persona specified, determine by language
+        if is_arabic_text:
+            provider = provider or "edge"
+            voice_id = voice_id or "ar-EG-ShakirNeural"
+        else:
+            provider = provider or "edge"
+            voice_id = voice_id or "en-US-GuyNeural"
 
     # _config_profile_scope raises 400/404 for a bad profile — pass it
     # through instead of masking it as a 500 synthesis failure.
