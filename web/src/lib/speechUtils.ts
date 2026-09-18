@@ -126,13 +126,37 @@ export const pickArabicVoice = (
   voices: SpeechSynthesisVoice[],
   persona?: 'jarvis' | 'gwen'
 ): SpeechSynthesisVoice | undefined => {
-  // STRICT PERMANENT BAN: Local female voices (Salma, Hoda, Laila, Zeina, etc.) are PURGED.
-  // Female Arabic voice is handled EXCLUSIVELY by ElevenLabs API.
-  if (persona === 'gwen') {
-    return undefined;
+  const isGwen = persona === 'gwen';
+
+  if (isGwen) {
+    const femaleArabic = voices.filter((v) => {
+      const name = v.name.toLowerCase();
+      const isFemale =
+        name.includes('female') ||
+        name.includes('salma') ||
+        name.includes('hoda') ||
+        name.includes('laila') ||
+        name.includes('zeina') ||
+        name.includes('mariam') ||
+        name.includes('fatima') ||
+        name.includes('zira') ||
+        name.includes('jenny');
+      return isFemale && v.lang.toLowerCase().includes('ar');
+    });
+    if (femaleArabic.length > 0) return femaleArabic[0];
+
+    const anyArabicNonMale = voices.filter(
+      (v) =>
+        v.lang.toLowerCase().includes('ar') &&
+        !v.name.toLowerCase().includes('male') &&
+        !v.name.toLowerCase().includes('shakir') &&
+        !v.name.toLowerCase().includes('tarik')
+    );
+    if (anyArabicNonMale.length > 0) return anyArabicNonMale[0];
+    return voices.find((v) => v.lang.toLowerCase().includes('ar'));
   }
 
-  // Filter out any female voice strictly
+  // Jarvis: Male Arabic voices
   const maleArabicVoices = voices.filter((v) => {
     const name = v.name.toLowerCase();
     const isFemale =
@@ -160,7 +184,9 @@ export const pickArabicVoice = (
     );
   });
 
-  if (maleArabicVoices.length === 0) return undefined;
+  if (maleArabicVoices.length === 0) {
+    return voices.find((v) => v.lang.toLowerCase().includes('ar'));
+  }
 
   const maleEg = maleArabicVoices.find(
     (v) =>
@@ -181,7 +207,6 @@ export const pickArabicVoice = (
   );
   if (generalMale) return generalMale;
 
-  // Return any other verified non-female Arabic voice
   return maleArabicVoices[0];
 };
 
@@ -189,11 +214,39 @@ export const pickEnglishVoice = (
   voices: SpeechSynthesisVoice[],
   persona?: 'jarvis' | 'gwen'
 ): SpeechSynthesisVoice | undefined => {
-  // STRICT PERMANENT BAN: Local female voices are PURGED.
-  if (persona === 'gwen') {
-    return undefined;
+  const isGwen = persona === 'gwen';
+
+  if (isGwen) {
+    const femaleEnglish = voices.filter((v) => {
+      const name = v.name.toLowerCase();
+      const isFemaleName =
+        name.includes('female') ||
+        name.includes('zira') ||
+        name.includes('jenny') ||
+        name.includes('samantha') ||
+        name.includes('victoria') ||
+        name.includes('karen') ||
+        name.includes('linda') ||
+        name.includes('susan') ||
+        name.includes('ava') ||
+        name.includes('emma');
+      return isFemaleName && v.lang.toLowerCase().startsWith('en');
+    });
+    if (femaleEnglish.length > 0) return femaleEnglish[0];
+
+    const nonMale = voices.filter(
+      (v) =>
+        v.lang.toLowerCase().startsWith('en') &&
+        !v.name.toLowerCase().includes('male') &&
+        !v.name.toLowerCase().includes('guy') &&
+        !v.name.toLowerCase().includes('david') &&
+        !v.name.toLowerCase().includes('george')
+    );
+    if (nonMale.length > 0) return nonMale[0];
+    return voices.find((v) => v.lang.toLowerCase().startsWith('en'));
   }
 
+  // Jarvis: Male English voices
   const maleEnglishVoices = voices.filter((v) => {
     const name = v.name.toLowerCase();
     const isFemale =
@@ -202,13 +255,18 @@ export const pickEnglishVoice = (
       name.includes('jenny') ||
       name.includes('samantha') ||
       name.includes('victoria') ||
+      name.includes('karen') ||
       name.includes('linda') ||
-      name.includes('susan');
+      name.includes('susan') ||
+      name.includes('ava') ||
+      name.includes('emma');
     if (isFemale) return false;
     return v.lang.toLowerCase().startsWith('en');
   });
 
-  if (maleEnglishVoices.length === 0) return undefined;
+  if (maleEnglishVoices.length === 0) {
+    return voices.find((v) => v.lang.toLowerCase().startsWith('en'));
+  }
 
   // Jarvis British / sophisticated male voice
   const britishMale = maleEnglishVoices.find(
@@ -231,7 +289,7 @@ export const pickEnglishVoice = (
   );
   if (naturalMale) return naturalMale;
 
-  return undefined;
+  return maleEnglishVoices[0];
 };
 
 export const splitTextIntoSentences = (text: string): string[] => {
@@ -276,7 +334,8 @@ export interface ExtractedSentence {
 }
 
 /**
- * Incrementally extracts the next clean, spoken sentence from streaming LLM output.
+ * Incrementally extracts the next clean, spoken sentence or clause from streaming LLM output.
+ * Starts speech on the very first clause or sentence boundary (<200ms) for real-time voice latency.
  */
 export const extractNextSpokenSentence = (
   cleanText: string,
@@ -285,32 +344,39 @@ export const extractNextSpokenSentence = (
   if (!cleanText || startIndex >= cleanText.length) return null;
 
   const unchunked = cleanText.slice(startIndex);
-  // Match standard sentence terminators: . ! ? ؟ ؛ or newline followed by space or end
-  const match = unchunked.match(/([.!?؛؟\n]+)(?:\s+|$)/);
-  if (match && match.index !== undefined) {
-    const boundary = match.index + match[1].length;
+
+  // 1. Check for sentence terminators and clause separators, prioritizing whichever comes first in text
+  const sentenceMatch = unchunked.match(/([.!?؛؟\n]+)(?:\s+|$)/);
+  const clauseMatch = unchunked.match(/([,،:;—]+)(?:\s+|$)/);
+
+  // If a clause separator occurs before any sentence terminator (e.g. "Understood sir, I will...")
+  if (
+    clauseMatch &&
+    clauseMatch.index !== undefined &&
+    (!sentenceMatch || sentenceMatch.index === undefined || clauseMatch.index < sentenceMatch.index)
+  ) {
+    const boundary = clauseMatch.index + clauseMatch[1].length;
+    const raw = unchunked.slice(0, boundary).trim();
+    const wordCount = raw.split(/\s+/).filter(Boolean).length;
+    if (raw.length >= 10 || wordCount >= 2) {
+      return { sentence: raw, nextIndex: startIndex + boundary };
+    }
+  }
+
+  // 2. Standard sentence terminators: . ! ? ؟ ؛ or newline
+  if (sentenceMatch && sentenceMatch.index !== undefined) {
+    const boundary = sentenceMatch.index + sentenceMatch[1].length;
     const raw = unchunked.slice(0, boundary).trim();
     if (raw.length > 0) {
       return { sentence: raw, nextIndex: startIndex + boundary };
     }
   }
 
-    // If unchunked is getting long (> 60 chars or > 10 words) and has a clause separator (comma)
-  if (unchunked.length > 60) {
-    const commaMatch = unchunked.match(/([,،])\s+/);
-    if (commaMatch && commaMatch.index !== undefined && commaMatch.index > 15) {
-      const boundary = commaMatch.index + commaMatch[1].length;
-      const raw = unchunked.slice(0, boundary).trim();
-      if (raw.length > 0) {
-        return { sentence: raw, nextIndex: startIndex + boundary };
-      }
-    }
-  }
-
-  // If unchunked is reaching >= 75 chars without punctuation, split at word boundary for zero-delay speech
-  if (unchunked.length >= 75) {
-    const spaceIndex = unchunked.lastIndexOf(' ', 75);
-    if (spaceIndex >= 25) {
+  // 3. Natural speaking pause: if continuous text reaches >= 40 chars without punctuation,
+  // split at the nearest word boundary so speech begins immediately instead of stalling
+  if (unchunked.length >= 40) {
+    const spaceIndex = unchunked.lastIndexOf(' ', 40);
+    if (spaceIndex >= 20) {
       const raw = unchunked.slice(0, spaceIndex).trim();
       if (raw.length > 0) {
         return { sentence: raw, nextIndex: startIndex + spaceIndex + 1 };

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   cleanSpokenText,
   extractNextSpokenSentence,
+  pickArabicVoice,
+  pickEnglishVoice,
   PipelinedAudioQueue,
   splitTextIntoSentences,
 } from './speechUtils';
@@ -103,5 +105,44 @@ describe('speechUtils - Streaming Sentence Pipeline', () => {
 
     // task_2 should never have executed
     expect(events).not.toContain('task_2');
+  });
+
+  it('extracts early conversational clauses on commas in English and Arabic for instant speech start', () => {
+    const clauseEn = 'Understood sir, I will check that for you right now.';
+    const firstEn = extractNextSpokenSentence(clauseEn, 0);
+    expect(firstEn?.sentence).toBe('Understood sir,');
+    expect(firstEn?.nextIndex).toBe(15);
+
+    const secondEn = extractNextSpokenSentence(clauseEn, firstEn!.nextIndex);
+    expect(secondEn?.sentence).toBe('I will check that for you right now.');
+
+    const clauseAr = 'أهلاً يا فندم، جاري تجهيز كافة البيانات المطلوبة فوراً.';
+    const firstAr = extractNextSpokenSentence(clauseAr, 0);
+    expect(firstAr?.sentence).toBe('أهلاً يا فندم،');
+    expect(firstAr?.nextIndex).toBe(14);
+
+    const secondAr = extractNextSpokenSentence(clauseAr, firstAr!.nextIndex);
+    expect(secondAr?.sentence).toBe('جاري تجهيز كافة البيانات المطلوبة فوراً.');
+  });
+
+  it('selects appropriate male voices for Jarvis and female voices for Gwen', () => {
+    const mockVoices = [
+      { name: 'Microsoft George - English (United Kingdom)', lang: 'en-GB' } as SpeechSynthesisVoice,
+      { name: 'Microsoft Zira - English (United States)', lang: 'en-US' } as SpeechSynthesisVoice,
+      { name: 'Microsoft Shakir - Arabic (Egypt)', lang: 'ar-EG' } as SpeechSynthesisVoice,
+      { name: 'Microsoft Salma - Arabic (Egypt)', lang: 'ar-EG' } as SpeechSynthesisVoice,
+    ];
+
+    const jarvisEn = pickEnglishVoice(mockVoices, 'jarvis');
+    expect(jarvisEn?.name).toContain('George');
+
+    const gwenEn = pickEnglishVoice(mockVoices, 'gwen');
+    expect(gwenEn?.name).toContain('Zira');
+
+    const jarvisAr = pickArabicVoice(mockVoices, 'jarvis');
+    expect(jarvisAr?.name).toContain('Shakir');
+
+    const gwenAr = pickArabicVoice(mockVoices, 'gwen');
+    expect(gwenAr?.name).toContain('Salma');
   });
 });

@@ -481,11 +481,14 @@ export default function JarvisCallPage() {
           }
         });
 
+        const voiceContext = `Voice Persona: ${persona === "gwen" ? "Gwen (Female AI)" : "Jarvis (Executive Male AI)"}. Spoken dialogue language: ${_language}. Keep responses concise and conversational for real-time speech.`;
+
         const submitPrompt = (sidToSubmit: string) => {
           gw.request("prompt.submit", {
             session_id: sidToSubmit,
             text,
             surface: "voice-live",
+            voice_context: voiceContext,
           }).catch(
             async (err) => {
               if (settled) return;
@@ -502,6 +505,7 @@ export default function JarvisCallPage() {
                     session_id: currentRuntimeSid,
                     text,
                     surface: "voice-live",
+                    voice_context: voiceContext,
                   });
                   return;
                 } catch (retryErr) {

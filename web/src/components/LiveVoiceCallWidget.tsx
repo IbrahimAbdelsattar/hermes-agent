@@ -144,9 +144,9 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   });
   const [pauseTolerance, setPauseTolerance] = useState<PauseTolerance>(() => {
     if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-      return (localStorage.getItem('JARVIS_VOICE_PAUSE_TOLERANCE') as PauseTolerance) || 'balanced';
+      return (localStorage.getItem('JARVIS_VOICE_PAUSE_TOLERANCE') as PauseTolerance) || 'fast';
     }
-    return 'balanced';
+    return 'fast';
   });
   const [antiInterruptionShield, setAntiInterruptionShield] = useState<boolean>(() => {
     if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
@@ -395,14 +395,9 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
   const speakWithBrowser = useCallback(
     async (text: string): Promise<void> => {
-      // Local female browser voice is PERMANENTLY PURGED.
-      // Under NO circumstances should browser speech play for Gwen persona.
-      const langResult = detectLanguageContent(text);
-      if (selectedPersona === 'gwen') {
-        console.warn('[VoiceSentinel] Browser speech cancelled: Gwen exclusively uses ElevenLabs.');
-        return;
-      }
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      const langResult = detectLanguageContent(text);
+      const effectivePersona: VoicePersona = personaRef.current || selectedPersona;
       const voices = await getVoicesSafely();
       const isArabicSpeech =
         languageRef.current === 'Arabic'
@@ -411,8 +406,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           ? false
           : langResult.isArabicPredominant;
       const voice = isArabicSpeech
-        ? pickArabicVoice(voices, 'jarvis')
-        : pickEnglishVoice(voices, 'jarvis');
+        ? pickArabicVoice(voices, effectivePersona)
+        : pickEnglishVoice(voices, effectivePersona);
 
       if (isArabicSpeech && !voice) {
         const anyArabic = voices.find((v) => v.lang.toLowerCase().includes('ar'));
@@ -424,7 +419,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               const utterance = new SpeechSynthesisUtterance(sentence);
               utterance.lang = anyArabic.lang || 'ar-EG';
               utterance.voice = anyArabic;
-              utterance.rate = 1.0;
+              utterance.rate = 1.05;
+              utterance.pitch = effectivePersona === 'gwen' ? 1.05 : 0.95;
               utterance.onend = () => resolve();
               utterance.onerror = () => resolve();
               window.speechSynthesis.speak(utterance);
@@ -432,8 +428,6 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           }
           return;
         }
-        console.warn('[VoiceSentinel] No authentic male Arabic voice available in browser, skipping local fallback.');
-        return;
       }
 
       const sentences = splitTextIntoSentences(text);
@@ -445,8 +439,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         await new Promise<void>((resolve) => {
           const utterance = new SpeechSynthesisUtterance(sentence);
           utterance.lang = isArabicSpeech ? 'ar-EG' : 'en-US';
-          utterance.rate = 1.02;
-          utterance.pitch = 0.94;
+          utterance.rate = 1.05;
+          utterance.pitch = effectivePersona === 'gwen' ? 1.05 : 0.95;
           if (voice) utterance.voice = voice;
 
           let keepAliveTimer: any = null;
@@ -474,7 +468,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   );
 
   const speakSingleSentenceBrowser = useCallback(
-    async (rawSentence: string, signal?: AbortSignal): Promise<void> => {
+    async (rawSentence: string, persona: VoicePersona = 'jarvis', signal?: AbortSignal): Promise<void> => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window) || signal?.aborted) {
         return;
       }
@@ -491,8 +485,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
       const voices = await getVoicesSafely();
       const voice = isArabicSpeech
-        ? pickArabicVoice(voices, 'jarvis')
-        : pickEnglishVoice(voices, 'jarvis');
+        ? pickArabicVoice(voices, persona)
+        : pickEnglishVoice(voices, persona);
 
       await new Promise<void>((resolve) => {
         if (signal?.aborted) {
@@ -502,8 +496,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = isArabicSpeech ? 'ar-EG' : 'en-US';
-        utterance.rate = 1.05;
-        utterance.pitch = 0.95;
+        utterance.rate = 1.06;
+        utterance.pitch = persona === 'gwen' ? 1.05 : 0.95;
         if (voice) utterance.voice = voice;
 
         let keepAliveTimer: any = null;
@@ -551,7 +545,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
       try {
         const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), 6000);
+        const timeoutId = setTimeout(() => timeoutController.abort(), 2500);
 
         const onSignalAbort = () => {
           timeoutController.abort();
@@ -640,13 +634,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           }
         }
 
-        // Fallback to local browser speech if server synthesis fails or times out (for Jarvis)
-        if (persona === 'jarvis' && !signal?.aborted) {
-          await speakSingleSentenceBrowser(text, signal);
+        // Fast zero-latency fallback to browser speech synthesis
+        if (!signal?.aborted) {
+          await speakSingleSentenceBrowser(text, persona, signal);
         }
       } catch {
-        if (persona === 'jarvis' && !signal?.aborted) {
-          await speakSingleSentenceBrowser(text, signal);
+        if (!signal?.aborted) {
+          await speakSingleSentenceBrowser(text, persona, signal);
         }
       }
     },
@@ -664,19 +658,18 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         return;
       }
 
-      if (latencyMode === 'instant' && persona === 'jarvis') {
-        await speakSingleSentenceBrowser(sentence, signal);
+      if (latencyMode === 'instant') {
+        await speakSingleSentenceBrowser(sentence, persona, signal);
         return;
       }
 
-      // Studio / Server Neural mode or Gwen
+      // Studio / Server Neural mode
       await speakSingleSentenceServer(sentence, persona, signal);
     },
     [speakSingleSentenceBrowser, speakSingleSentenceServer]
   );
 
-
-  const scheduleRearm = useCallback((delayMs = 250) => {
+  const scheduleRearm = useCallback((delayMs = 150) => {
     if (rearmTimerRef.current) {
       clearTimeout(rearmTimerRef.current);
     }
@@ -774,19 +767,15 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           }
         }
         // If server synthesis fails, only fallback to browser synthesis if persona is Jarvis
-        if (effectivePersona === 'jarvis') {
-          await speakWithBrowser(text);
-        }
+        await speakWithBrowser(text);
       } catch {
-        if (effectivePersona === 'jarvis') {
-          await speakWithBrowser(text);
-        }
+        await speakWithBrowser(text);
       } finally {
         setIsSpeaking(false);
         isSpeakingRef.current = false;
         if (statusRef.current === 'active' && !mutedRef.current && !isProcessingRef.current) {
           setMicStatus('Listening...');
-          scheduleRearm(450);
+          scheduleRearm(150);
           if (alwaysOnModeRef.current && !isAmbientStandbyRef.current) {
             resetIdleStandbyTimer();
           }
@@ -967,17 +956,16 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             replaceMessages(messagesRef.current.filter((m) => m.id !== streamingId));
           }
 
-          // Enqueue any remaining un-spoken text
+          const effectivePersona: VoicePersona = personaRef.current || personaToUse || selectedPersona;
           const finalClean = cleanSpokenText(reply);
           const remainder = sanitizeTextForSpeech(finalClean.slice(spokenCharIndex));
           if (remainder.length >= 2) {
             audioQueue.enqueue((signal) =>
-              speakSentence(remainder, personaToUse, audioLatencyModeRef.current, signal)
+              speakSentence(remainder, effectivePersona, audioLatencyModeRef.current, signal)
             );
           }
 
           if (sessionVersion === sessionVersionRef.current && statusRef.current === 'active') {
-            const effectivePersona: VoicePersona = personaRef.current || personaToUse || selectedPersona;
             appendMessage('assistant', reply, effectivePersona);
           }
 
@@ -1081,7 +1069,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           isProcessingRef.current = false;
           if (statusRef.current === 'active' && !mutedRef.current && !isSpeakingRef.current) {
             setMicStatus('Listening...');
-            scheduleRearm(300);
+            scheduleRearm(150);
           }
         }
       }
@@ -1095,11 +1083,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         return null; // Push-to-talk never times out automatically
       }
 
-      let baseMs = 600; // Balanced conversational tempo: 600ms
+      let baseMs = 250; // Ultra snappy 250ms default
       if (pauseTolerance === 'relaxed') {
-        baseMs = 1200; // 1.2s
+        baseMs = 900;
+      } else if (pauseTolerance === 'balanced') {
+        baseMs = 500;
       } else if (pauseTolerance === 'fast') {
-        baseMs = 350; // 350ms (ultra snappy)
+        baseMs = 250;
       }
 
       if (!antiInterruptionShield) {
@@ -1134,11 +1124,11 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         lastWord.startsWith('ف');
 
       if (isContinuation) {
-        dynamicBonus += 350;
+        dynamicBonus += 150;
       }
 
-      // Hard cap at 1500ms max so ambient noise never holds a turn indefinitely
-      return Math.min(1500, baseMs + dynamicBonus);
+      // Hard cap at 750ms max so turns are always submitted promptly
+      return Math.min(750, baseMs + dynamicBonus);
     },
     [antiInterruptionShield, pauseTolerance, turnMode]
   );
@@ -1280,9 +1270,11 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       }
 
       let capturedChunks = '';
+      let hasFinal = false;
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const chunk = String(event.results[index][0]?.transcript || '').trim();
         if (event.results[index].isFinal) {
+          hasFinal = true;
           speechAccumulatorRef.current = speechAccumulatorRef.current
             ? `${speechAccumulatorRef.current} ${chunk}`
             : chunk;
@@ -1342,7 +1334,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           countdownIntervalRef.current = null;
         }
 
-        const timeoutMs = getPauseTimeoutMs(currentDraft);
+        const calculatedTimeout = getPauseTimeoutMs(currentDraft);
+        const timeoutMs =
+          calculatedTimeout !== null
+            ? hasFinal && !capturedChunks
+              ? Math.min(calculatedTimeout, 200)
+              : calculatedTimeout
+            : null;
 
         if (timeoutMs !== null) {
           const deadline = Date.now() + timeoutMs;
