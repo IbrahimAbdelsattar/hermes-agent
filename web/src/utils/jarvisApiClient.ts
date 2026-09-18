@@ -357,7 +357,7 @@ export async function fetchLiveGitHub(username = 'IbrahimAbdelsattar', perPage =
 
 export async function fetchLiveNumberFact(): Promise<LiveNumberFact> {
   try {
-    const res = await fetch('http://numbersapi.com/random/math?json');
+    const res = await fetch('https://numbersapi.com/random/math?json');
     if (res.ok) {
       const data = await res.json();
       return {
@@ -506,7 +506,7 @@ export async function fetchLivePublicApis(): Promise<LivePublicApiCatalog> {
       { name: 'CoinGecko', description: 'Real-time cryptocurrency exchange and ticker rates', url: 'https://www.coingecko.com/api', auth: 'No', https: 'Yes', cors: 'Yes' },
       { name: 'Nager.Date', description: 'Worldwide public holidays and calendar APIs', url: 'https://date.nager.at', auth: 'No', https: 'Yes', cors: 'Yes' },
       { name: 'Where the ISS at', description: 'Real-time orbital tracking of the International Space Station', url: 'https://wheretheiss.at', auth: 'No', https: 'Yes', cors: 'Yes' },
-      { name: 'NumbersAPI', description: 'Interesting facts and trivia regarding numbers and math', url: 'http://numbersapi.com', auth: 'No', https: 'Yes', cors: 'Yes' },
+      { name: 'NumbersAPI', description: 'Interesting facts and trivia regarding numbers and math', url: 'https://numbersapi.com', auth: 'No', https: 'Yes', cors: 'Yes' },
     ],
   };
 }

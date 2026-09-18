@@ -158,4 +158,28 @@ describe("JarvisCallPage", () => {
     // In push-to-talk mode, pause tolerance pills are hidden
     expect(container.textContent).not.toContain("Relaxed (3.0s)");
   });
+
+  it("renders 24/7 Live Mode toggle and Tony Stark Knock / Wake Up button", async () => {
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={["/jarvis?tab=call"]}>
+          <JarvisCallPage />
+        </MemoryRouter>
+      );
+    });
+
+    expect(container.textContent).toContain("24/7 Live Mode");
+    expect(container.textContent).toContain("Knock / Wake Up");
+    expect(container.textContent).toContain("24/7 IRON MAN LIVE MODE READY");
+
+    const liveModeBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("24/7 Live Mode")
+    );
+    expect(liveModeBtn).toBeDefined();
+
+    await act(async () => {
+      liveModeBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+  });
 });
+

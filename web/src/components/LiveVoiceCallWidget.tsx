@@ -13,6 +13,7 @@ import {
   PhoneOff,
   Play,
   Plus,
+  Power,
   Radio,
   Search,
   Send,
@@ -24,6 +25,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Zap,
 } from 'lucide-react';
 import { authedFetch, type SessionInfo } from '@/lib/api';
 import { JarvisUltronVoiceOrb, type OrbTheme } from './JarvisUltronVoiceOrb';
@@ -36,6 +38,13 @@ import {
   splitTextIntoSentences,
 } from '../lib/speechUtils';
 import { parseMusicCommand, findBestTrackIndex } from '../utils/musicCommander';
+import {
+  playKnockSound,
+  playArcReactorBootSound,
+  playWakeChime,
+  playStandbyChime,
+} from '@/lib/ironManAudioFX';
+import { matchWakeWord } from '@/utils/wakeWordMatcher';
 import { DEFAULT_DEMO_TRACKS } from './MusicPlayerWidget';
 
 type CallStatus = 'idle' | 'starting' | 'active';
@@ -133,6 +142,37 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
   });
   const [pauseCountdown, setPauseCountdown] = useState<number | null>(null);
   const [liveVolume, setLiveVolume] = useState<number>(0);
+
+  // 24/7 Always-On Iron Man Ambient Mode
+  const [alwaysOnMode, setAlwaysOnMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('JARVIS_ALWAYS_ON_MODE');
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
+  const [isAmbientStandby, setIsAmbientStandby] = useState<boolean>(false);
+  const [hasGreeted, setHasGreeted] = useState<boolean>(false);
+
+  const alwaysOnModeRef = useRef<boolean>(alwaysOnMode);
+  const isAmbientStandbyRef = useRef<boolean>(isAmbientStandby);
+  const hasGreetedRef = useRef<boolean>(hasGreeted);
+  const idleTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    alwaysOnModeRef.current = alwaysOnMode;
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.setItem('JARVIS_ALWAYS_ON_MODE', String(alwaysOnMode));
+    }
+  }, [alwaysOnMode]);
+
+  useEffect(() => {
+    isAmbientStandbyRef.current = isAmbientStandby;
+  }, [isAmbientStandby]);
+
+  useEffect(() => {
+    hasGreetedRef.current = hasGreeted;
+  }, [hasGreeted]);
 
   const messagesRef = useRef<CallMessage[]>(messages);
   const statusRef = useRef<CallStatus>('idle');
@@ -474,10 +514,82 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         if (statusRef.current === 'active' && !mutedRef.current && !isProcessingRef.current) {
           setMicStatus('Listening...');
           scheduleRearm(450);
+          if (alwaysOnModeRef.current && !isAmbientStandbyRef.current) {
+            resetIdleStandbyTimer();
+          }
         }
       }
     },
     [scheduleRearm, selectedPersona, speakWithBrowser, stopRecognition, stopSpeaking]
+  );
+
+  const enterAmbientStandby = useCallback(() => {
+    if (!alwaysOnModeRef.current || statusRef.current !== 'active' || isAmbientStandbyRef.current) return;
+    playStandbyChime();
+    setIsAmbientStandby(true);
+    isAmbientStandbyRef.current = true;
+    setMicStatus('Standby engaged: 24/7 ambient listening for "Wake up Jarvis" / "اصحى يا جارفيس"...');
+  }, []);
+
+  const resetIdleStandbyTimer = useCallback(() => {
+    if (idleTimeoutRef.current) {
+      clearTimeout(idleTimeoutRef.current);
+      idleTimeoutRef.current = null;
+    }
+    if (!alwaysOnModeRef.current || statusRef.current !== 'active' || isAmbientStandbyRef.current) return;
+    idleTimeoutRef.current = setTimeout(() => {
+      if (
+        statusRef.current === 'active' &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current &&
+        !interimTranscript
+      ) {
+        enterAmbientStandby();
+      }
+    }, 45000);
+  }, [enterAmbientStandby, interimTranscript]);
+
+  const getGreetingText = useCallback((isArabicLang: boolean) => {
+    const hour = new Date().getHours();
+    if (isArabicLang) {
+      if (hour >= 5 && hour < 12) {
+        return 'صباح الخير يا فندم. كافة الأنظمة تعمل بكفاءة، وجارفيس مستعد للأوامر.';
+      } else if (hour >= 12 && hour < 18) {
+        return 'مساء الخير يا فندم. كافة الأنظمة تعمل بكفاءة، وجارفيس في الخدمة ومستعد.';
+      } else {
+        return 'أهلاً يا فندم. الأنظمة تعمل بكفاءة عالية، وجارفيس في الخدمة ومستعد لأي مهمة.';
+      }
+    } else {
+      if (hour >= 5 && hour < 12) {
+        return 'Good morning, sir. All systems operational. Jarvis is standing by.';
+      } else if (hour >= 12 && hour < 18) {
+        return 'Good afternoon, sir. All systems operational. Jarvis is standing by.';
+      } else {
+        return 'Good evening, sir. All systems operational. Jarvis is standing by.';
+      }
+    }
+  }, []);
+
+  const triggerWakeGreeting = useCallback(
+    async (isWakeFromStandby = false) => {
+      playArcReactorBootSound();
+      setIsAmbientStandby(false);
+      isAmbientStandbyRef.current = false;
+
+      const isAr =
+        languageRef.current === 'Arabic' ||
+        (languageRef.current === 'Auto' &&
+          typeof navigator !== 'undefined' &&
+          !(navigator.language || '').startsWith('en'));
+
+      const greetingText = isWakeFromStandby
+        ? (isAr ? 'تحت أمرك يا فندم، أنا سامعك وشغال معاك.' : 'At your service, sir. How may I assist you?')
+        : getGreetingText(isAr);
+
+      appendMessage('assistant', greetingText, selectedPersona);
+      await speak(greetingText, selectedPersona);
+    },
+    [appendMessage, getGreetingText, selectedPersona, speak]
   );
 
   const sendChatTurn = useCallback(
@@ -841,6 +953,40 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       ).trim();
 
       if (currentDraft) {
+        if (isAmbientStandbyRef.current) {
+          const wakeCheck = matchWakeWord(currentDraft);
+          if (wakeCheck.isWake) {
+            speechAccumulatorRef.current = '';
+            setInterimTranscript('');
+            playWakeChime();
+
+            if (wakeCheck.command) {
+              setIsAmbientStandby(false);
+              isAmbientStandbyRef.current = false;
+              setMicStatus(`Wake command received: "${wakeCheck.command}"`);
+              void submitTurn(wakeCheck.command);
+            } else {
+              void triggerWakeGreeting(true);
+            }
+            return;
+          }
+          setMicStatus('Ambient Standby: Listening for "Wake up Jarvis" / "اصحى يا جارفيس"...');
+          return;
+        }
+
+        // Check for Standby command while in active conversation mode
+        const standbyCheck = matchWakeWord(currentDraft);
+        if (standbyCheck.isStandby) {
+          speechAccumulatorRef.current = '';
+          setInterimTranscript('');
+          enterAmbientStandby();
+          appendMessage(
+            'system',
+            'Jarvis entered ambient standby mode. Say "Wake up Jarvis" or tap Arc Reactor to resume.'
+          );
+          return;
+        }
+
         setInterimTranscript(currentDraft);
         setMicStatus(`Listening: "${currentDraft.slice(-45)}"`);
 
@@ -928,7 +1074,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
     recognitionRef.current = recognition;
     return recognition;
-  }, [getPauseTimeoutMs, scheduleRearm, submitTurn]);
+  }, [
+    appendMessage,
+    enterAmbientStandby,
+    getPauseTimeoutMs,
+    scheduleRearm,
+    submitTurn,
+    triggerWakeGreeting,
+  ]);
 
   const startRecognition = useCallback(() => {
     if (
@@ -1050,63 +1203,111 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
     };
   }, [stopSpeaking]);
 
-  const startCall = useCallback(async () => {
-    if (statusRef.current !== 'idle') return;
-    setStatus('starting');
-    statusRef.current = 'starting';
-    setMicStatus('Requesting microphone permission...');
-    setDurationSeconds(0);
-    sessionVersionRef.current += 1;
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-        streamRef.current = stream;
-        try {
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            const ctx = new AudioContextClass();
-            if (ctx.state === 'suspended') {
-              await ctx.resume();
+  const startCall = useCallback(
+    async (isKnockOrAuto = false) => {
+      if (statusRef.current !== 'idle') return;
+      setStatus('starting');
+      statusRef.current = 'starting';
+      setMicStatus('Requesting microphone permission...');
+      setDurationSeconds(0);
+      sessionVersionRef.current += 1;
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          });
+          streamRef.current = stream;
+          try {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass) {
+              const ctx = new AudioContextClass();
+              if (ctx.state === 'suspended') {
+                await ctx.resume();
+              }
+              const srcNode = ctx.createMediaStreamSource(stream);
+              const analyser = ctx.createAnalyser();
+              analyser.fftSize = 256;
+              srcNode.connect(analyser);
+              audioCtxRef.current = ctx;
+              analyserRef.current = analyser;
             }
-            const srcNode = ctx.createMediaStreamSource(stream);
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 256;
-            srcNode.connect(analyser);
-            audioCtxRef.current = ctx;
-            analyserRef.current = analyser;
+          } catch (audioErr) {
+            console.warn('[voice] AudioContext init error:', audioErr);
           }
-        } catch (audioErr) {
-          console.warn('[voice] AudioContext init error:', audioErr);
+          setMicStatus('Microphone active & capture bound');
         }
-        setMicStatus('Microphone active & capture bound');
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'permission unavailable';
+        setMicStatus(`Microphone unavailable: ${detail}. Typed input active.`);
       }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'permission unavailable';
-      setMicStatus(`Microphone unavailable: ${detail}. Typed input active.`);
+      statusRef.current = 'active';
+      setStatus('active');
+
+      if (!hasGreetedRef.current || isKnockOrAuto) {
+        setHasGreeted(true);
+        hasGreetedRef.current = true;
+        window.setTimeout(() => {
+          void triggerWakeGreeting(false);
+        }, 100);
+      } else {
+        appendMessage(
+          'assistant',
+          selectedPersona === 'gwen'
+            ? 'أهلاً بك يا باشا! أنا جوين، الخط المباشر شغال مع جارفيس وهيرميس إيجينت.'
+            : 'Jarvis online. Live voice call session initialized with Hermes Agent.',
+          selectedPersona
+        );
+      }
+      window.setTimeout(startRecognition, 100);
+    },
+    [appendMessage, selectedPersona, startRecognition, triggerWakeGreeting]
+  );
+
+  const handleKnockToWake = useCallback(async () => {
+    playKnockSound();
+    if (statusRef.current === 'idle') {
+      await startCall(true);
+    } else {
+      window.setTimeout(() => {
+        void triggerWakeGreeting(isAmbientStandbyRef.current);
+      }, 150);
     }
-    statusRef.current = 'active';
-    setStatus('active');
-    appendMessage(
-      'assistant',
-      selectedPersona === 'gwen'
-        ? 'أهلاً بك يا باشا! أنا جوين، الخط المباشر شغال مع جارفيس وهيرميس إيجينت.'
-        : 'Jarvis online. Live voice call session initialized with Hermes Agent.',
-      selectedPersona
-    );
-    window.setTimeout(startRecognition, 0);
-  }, [appendMessage, selectedPersona, startRecognition]);
+  }, [isAmbientStandby, startCall, triggerWakeGreeting]);
+
+  useEffect(() => {
+    if (!alwaysOnMode) return;
+    const tryAutoBoot = async () => {
+      try {
+        if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+          const perm = await navigator.permissions.query({ name: 'microphone' as any }).catch(() => null);
+          if (perm && perm.state === 'granted') {
+            if (statusRef.current === 'idle') {
+              void startCall(true);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void tryAutoBoot();
+  }, [alwaysOnMode, startCall]);
 
   const endCall = useCallback(() => {
     sessionVersionRef.current += 1;
     statusRef.current = 'idle';
     setStatus('idle');
+    setIsAmbientStandby(false);
+    isAmbientStandbyRef.current = false;
     setIsProcessing(false);
     setDurationSeconds(0);
     setInterimTranscript('');
     setPauseCountdown(null);
     pauseDeadlineRef.current = null;
+    if (idleTimeoutRef.current) {
+      clearTimeout(idleTimeoutRef.current);
+      idleTimeoutRef.current = null;
+    }
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
@@ -1182,20 +1383,46 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       <div className="bg-[#071526] border-b border-[#00f0ff]/20 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div className={`w-3 h-3 rounded-full ${status === 'active' ? 'bg-[#00f0ff] animate-ping' : 'bg-slate-600'}`} />
-            <div className={`w-3 h-3 rounded-full absolute top-0 left-0 ${status === 'active' ? 'bg-[#00f0ff]' : 'bg-slate-500'}`} />
+            <div className={`w-3 h-3 rounded-full ${status === 'active' ? (isAmbientStandby ? 'bg-amber-400 animate-pulse' : 'bg-[#00f0ff] animate-ping') : 'bg-slate-600'}`} />
+            <div className={`w-3 h-3 rounded-full absolute top-0 left-0 ${status === 'active' ? (isAmbientStandby ? 'bg-amber-400' : 'bg-[#00f0ff]') : 'bg-slate-500'}`} />
           </div>
           <div>
             <h2 className="text-sm font-bold tracking-wider uppercase text-[#00f0ff] flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-[#ffb700]" /> JARVIS LIVE VOICE SENTINEL
             </h2>
             <p className="text-[11px] font-mono text-[#80f7ff]/70">
-              Hermes Agent Integration • Status: <span className="text-[#00f0ff] uppercase">{status}</span>
+              Hermes Agent • Status:{' '}
+              {status === 'active' && isAmbientStandby ? (
+                <span className="text-amber-400 uppercase font-bold">STANDBY (24/7 AMBIENT LISTENING)</span>
+              ) : (
+                <span className="text-[#00f0ff] uppercase font-bold">{status}</span>
+              )}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* 24/7 Always-On Live Mode Pill */}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !alwaysOnMode;
+              setAlwaysOnMode(next);
+              if (!next && isAmbientStandby) {
+                setIsAmbientStandby(false);
+              }
+            }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold font-mono flex items-center gap-1.5 transition-all ${
+              alwaysOnMode
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)]'
+                : 'bg-[#020b14] border border-slate-700 text-slate-400'
+            }`}
+            title="24/7 Always-On Mode: Jarvis stays continuously listening in background for 'Wake up Jarvis' / 'اصحى يا جارفيس'"
+          >
+            <span className={`w-2 h-2 rounded-full ${alwaysOnMode ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+            <span>24/7 Live Mode</span>
+          </button>
+
           {/* Call History Drawer Toggle */}
           <button
             onClick={() => setShowHistory((prev) => !prev)}
@@ -1331,6 +1558,60 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
       {/* Main Body Grid */}
       <div className="p-4 space-y-4 flex-1 overflow-y-auto">
+        {/* Cold-Load Iron Man HUD Audio Unlock Prompt */}
+        {status === 'idle' && alwaysOnMode && (
+          <div
+            onClick={handleKnockToWake}
+            className="cursor-pointer bg-gradient-to-r from-amber-500/15 via-[#071d33] to-cyan-500/15 border border-amber-400/50 hover:border-amber-400 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_25px_rgba(245,158,11,0.2)] transition-all group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-400/20 border border-amber-400/40 flex items-center justify-center text-amber-300 group-hover:scale-110 transition-transform">
+                <Zap className="w-4 h-4 text-amber-300 animate-pulse" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-amber-200">
+                  ⚡ 24/7 IRON MAN LIVE MODE READY
+                </p>
+                <p className="text-[11px] text-slate-300 font-mono">
+                  Click or tap anywhere here to initialize JARVIS HUD audio & wake up
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-[0_0_12px_rgba(245,158,11,0.4)] transition-all"
+            >
+              <Power className="w-3.5 h-3.5" />
+              Initialize & Wake Up
+            </button>
+          </div>
+        )}
+
+        {/* Ambient Standby 24/7 Listening Banner */}
+        {status === 'active' && isAmbientStandby && (
+          <div className="bg-gradient-to-r from-[#00f0ff]/15 via-[#071d33] to-[#00f0ff]/15 border border-[#00f0ff]/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,240,255,0.2)] animate-in fade-in duration-200">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#00f0ff] animate-ping" />
+              <div>
+                <p className="text-xs font-bold text-[#00f0ff]">
+                  JARVIS AMBIENT STANDBY — 24/7 ALWAYS LISTENING
+                </p>
+                <p className="text-[11px] text-[#80f7ff]/70 font-mono">
+                  Say <span className="text-white font-semibold">"Wake up Jarvis"</span> or <span className="text-white font-semibold">"اصحى يا جارفيس"</span>, or click Arc Reactor below
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleKnockToWake}
+              className="px-3.5 py-1.5 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/30 border border-[#00f0ff] text-[#00f0ff] font-bold rounded-lg text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(0,240,255,0.3)]"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              Wake Up (Knock)
+            </button>
+          </div>
+        )}
+
         {/* Active Session & Memory Bar */}
         <div className="bg-[#020b14] border border-[#00f0ff]/20 px-3 py-2 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
           <div className="flex items-center gap-2">
@@ -1645,19 +1926,33 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           </div>
         )}
 
-        {/* J.A.R.V.I.S. & ULTRON Neural Voice Orb Visualizer */}
-        <JarvisUltronVoiceOrb
-          analyser={analyserRef.current}
-          outputAnalyser={speechAnalyserRef.current}
-          isActive={status === 'active'}
-          isSpeaking={isSpeaking}
-          isUserSpeaking={liveVolume > 10}
-          isMuted={isMuted}
-          selectedPersona={selectedPersona}
-          themeMode={orbTheme}
-          onThemeChange={setOrbTheme}
-          sampleRate={audioCtxRef.current?.sampleRate || 48000}
-        />
+        {/* J.A.R.V.I.S. & ULTRON Neural Voice Orb Visualizer with Arc Reactor Tap-To-Wake */}
+        <div
+          onClick={handleKnockToWake}
+          className="cursor-pointer group relative rounded-xl transition-all"
+          title="Tap Arc Reactor / Knock to wake Jarvis (Iron Man style)"
+        >
+          <JarvisUltronVoiceOrb
+            analyser={analyserRef.current}
+            outputAnalyser={speechAnalyserRef.current}
+            isActive={status === 'active' && !isAmbientStandby}
+            isSpeaking={isSpeaking}
+            isUserSpeaking={liveVolume > 10}
+            isMuted={isMuted}
+            selectedPersona={selectedPersona}
+            themeMode={orbTheme}
+            onThemeChange={setOrbTheme}
+            sampleRate={audioCtxRef.current?.sampleRate || 48000}
+          />
+          {status === 'active' && isAmbientStandby && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="px-3.5 py-1.5 bg-[#020b14]/80 border border-[#00f0ff]/50 rounded-full text-[11px] font-mono font-bold text-[#00f0ff] backdrop-blur-md shadow-[0_0_20px_rgba(0,240,255,0.4)] animate-pulse flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-300" />
+                TAP OR SAY "WAKE UP JARVIS"
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Transcript Conversation Feed */}
         <div className="bg-[#071526]/50 border border-[#00f0ff]/20 rounded-xl p-4 h-64 overflow-y-auto space-y-3 font-mono text-xs shadow-inner">
@@ -1797,7 +2092,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           <div className="flex items-center gap-2">
             {status === 'idle' ? (
               <button
-                onClick={startCall}
+                onClick={() => startCall(false)}
                 className="px-5 py-2.5 bg-[#00f0ff] hover:bg-[#00f0ff]/90 text-slate-950 font-bold rounded-lg text-xs tracking-wider uppercase flex items-center gap-2 shadow-[0_0_15px_rgba(0,240,255,0.4)] transition-all"
               >
                 <Phone className="w-4 h-4" /> Start Call
@@ -1810,6 +2105,17 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
                 <PhoneOff className="w-4 h-4" /> End Call
               </button>
             )}
+
+            {/* Tony Stark Knock / Wake Up Button */}
+            <button
+              type="button"
+              onClick={handleKnockToWake}
+              className="px-4 py-2.5 bg-gradient-to-r from-amber-500/20 via-amber-400/25 to-amber-500/20 hover:from-amber-500/30 hover:to-amber-400/35 border border-amber-400/60 text-amber-200 font-bold rounded-lg text-xs tracking-wider uppercase flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.25)] hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] transition-all cursor-pointer"
+              title="Tony Stark style: Tap or knock to wake Jarvis instantly"
+            >
+              <Zap className="w-4 h-4 text-amber-300 animate-pulse" />
+              <span>Knock / Wake Up</span>
+            </button>
 
             <button
               onClick={toggleMicMute}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Mic, Bot, Music2, Globe, Sparkles, Disc3, Pause, SkipForward } from "lucide-react";
+import { Mic, Bot, Music2, Globe, Sparkles, Disc3, Pause, SkipForward, Zap } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";
@@ -522,9 +522,14 @@ return (
     {/* Top Navigation Tabs Header */}
     <div className="bg-[#071526]/90 border border-[#00f0ff]/30 rounded-xl p-4 shadow-[0_0_20px_rgba(0,240,255,0.1)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
       <div>
-        <div className="flex items-center gap-2 text-[#00f0ff] font-bold text-lg font-mono">
+        <div className="flex flex-wrap items-center gap-2 text-[#00f0ff] font-bold text-lg font-mono">
           <Sparkles className="size-5 text-[#ffb700] animate-pulse" />
           <span>J.A.R.V.I.S. Executive OS & Autonomous Hub</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-mono flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.3)]">
+            <span className="size-1.5 rounded-full bg-emerald-400 animate-ping" />
+            <Zap className="size-3 text-amber-300" />
+            24/7 AMBIENT LIVE
+          </span>
         </div>
         <p className="text-xs text-[#80f7ff]/70 mt-1 max-w-2xl font-mono">
           Live Voice Sentinel, Chief of Staff AI Assistant, Holographic Audio Deck & Real-time Global Feeds integrated directly into Hermes Agent.
