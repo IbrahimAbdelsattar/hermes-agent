@@ -3,6 +3,7 @@
 Extracted from ``hermes_cli.web_server``; helpers/state that tests monkeypatch on
 ``web_server`` stay there and are late-bound (cycle-safe).
 """
+from __future__ import annotations
 
 import base64
 import binascii
@@ -30,7 +31,7 @@ from hermes_cli.web_models import (
     VoiceLiveSessionRequest,
     YouTubePlayRequest,
 )
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 _log = logging.getLogger("hermes_cli.web_server")
 router = APIRouter()

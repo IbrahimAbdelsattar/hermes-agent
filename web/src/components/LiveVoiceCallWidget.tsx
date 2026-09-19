@@ -725,9 +725,30 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           : 'Jarvis (Male AI) is speaking...'
       );
 
+      // Hermes-style latency: in instant mode the browser voice starts in
+      // ~100ms. The old path always paid a server TTS round-trip (up to 15s)
+      // before falling back to the browser — greetings and error notices felt
+      // frozen. Server neural audio is a studio-mode choice, not the default.
+      if (audioLatencyModeRef.current === 'instant') {
+        try {
+          await speakWithBrowser(text);
+        } finally {
+          setIsSpeaking(false);
+          isSpeakingRef.current = false;
+          if (statusRef.current === 'active' && !mutedRef.current && !isProcessingRef.current) {
+            setMicStatus('Listening...');
+            scheduleRearm(150);
+            if (alwaysOnModeRef.current && !isAmbientStandbyRef.current) {
+              resetIdleStandbyTimer();
+            }
+          }
+        }
+        return;
+      }
+
       try {
         const controller = new AbortController();
-        const abortTimeout = setTimeout(() => controller.abort(), 15000);
+        const abortTimeout = setTimeout(() => controller.abort(), 8000);
         const response = await authedFetch('/api/audio/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1606,6 +1627,15 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       setMicStatus('Requesting microphone permission...');
       setDurationSeconds(0);
       sessionVersionRef.current += 1;
+      // Warm-up in parallel with the mic prompt so the first reply pays no
+      // cold-start tax: browser voices resolve now (not mid-sentence), and the
+      // TTS engine pre-loads its provider via a lease (see /api/audio/tts-lease).
+      void getVoicesSafely().catch(() => []);
+      void authedFetch('/api/audio/tts-lease', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lease: 'jarvis-voice-call', active: true }),
+      }).catch(() => null);
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -1742,6 +1772,12 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       audioCtxRef.current = null;
       analyserRef.current = null;
     }
+    // Release the TTS warm-up lease so resident local models can unload.
+    void authedFetch('/api/audio/tts-lease', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lease: 'jarvis-voice-call', active: false }),
+    }).catch(() => null);
     setMicStatus('Microphone released');
     appendMessage('system', 'Voice call session terminated.');
   }, [appendMessage, stopRecognition, stopSpeaking]);
