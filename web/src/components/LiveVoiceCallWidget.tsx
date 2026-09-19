@@ -501,12 +501,14 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         if (voice) utterance.voice = voice;
 
         let keepAliveTimer: any = null;
+        let safetyTimer: any = null;
         let settled = false;
 
         const cleanup = () => {
           if (settled) return;
           settled = true;
           if (keepAliveTimer) clearInterval(keepAliveTimer);
+          if (safetyTimer) clearTimeout(safetyTimer);
           signal?.removeEventListener('abort', onAbort);
           resolve();
         };
@@ -520,8 +522,20 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
         signal?.addEventListener('abort', onAbort, { once: true });
 
+        utterance.onstart = () => {
+          try {
+            if (window.speechSynthesis.paused) {
+              window.speechSynthesis.resume();
+            }
+          } catch {}
+        };
+
         utterance.onend = cleanup;
         utterance.onerror = cleanup;
+
+        // Safety timeout in case browser drops onend
+        const maxDurationMs = Math.max(3000, Math.min(25000, text.length * 120));
+        safetyTimer = setTimeout(cleanup, maxDurationMs);
 
         keepAliveTimer = setInterval(() => {
           if (!window.speechSynthesis.speaking) {
@@ -529,7 +543,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
           } else {
             window.speechSynthesis.resume();
           }
-        }, 1000);
+        }, 800);
+
+        try {
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        } catch {}
 
         window.speechSynthesis.speak(utterance);
       });
@@ -545,7 +565,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
 
       try {
         const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), 2500);
+        const timeoutId = setTimeout(() => timeoutController.abort(), 800);
 
         const onSignalAbort = () => {
           timeoutController.abort();
@@ -927,7 +947,13 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
             if (sessionVersion !== sessionVersionRef.current || statusRef.current !== 'active') return;
             const effective: VoicePersona = personaRef.current || personaToUse || selectedPersona;
             const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const next: CallMessage = { id: streamingId, sender: 'assistant', text: partial, persona: effective, timestamp };
+            const clean = cleanSpokenText(partial);
+            const displayText =
+              clean.trim() ||
+              (partial.includes('<think')
+                ? (isAr ? '⚡ جاري التفكير...' : '⚡ Jarvis is thinking...')
+                : partial);
+            const next: CallMessage = { id: streamingId, sender: 'assistant', text: displayText, persona: effective, timestamp };
             if (!streamingShown) {
               streamingShown = true;
               replaceMessages([...messagesRef.current, next]);
@@ -935,8 +961,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               replaceMessages(messagesRef.current.map((m) => (m.id === streamingId ? next : m)));
             }
 
-            // Extract complete sentences from the partial stream
-            const clean = cleanSpokenText(partial);
+            // Extract complete sentences or fast clauses from the partial stream
             while (true) {
               const res = extractNextSpokenSentence(clean, spokenCharIndex);
               if (!res) break;

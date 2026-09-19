@@ -481,7 +481,7 @@ export default function JarvisCallPage() {
           }
         });
 
-        const voiceContext = `Voice Persona: ${persona === "gwen" ? "Gwen (Female AI)" : "Jarvis (Executive Male AI)"}. Spoken dialogue language: ${_language}. Keep responses concise and conversational for real-time speech.`;
+        const voiceContext = `Voice Persona: ${persona === "gwen" ? "Gwen (Female AI)" : "Jarvis (Executive Male AI)"}. Spoken dialogue language: ${_language}. Keep responses concise, direct, and conversational for real-time speech. Output spoken dialogue immediately without preamble, without thinking tags (<think>), and without markdown lists so audio streams instantly.`;
 
         const submitPrompt = (sidToSubmit: string) => {
           gw.request("prompt.submit", {

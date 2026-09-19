@@ -71,11 +71,14 @@ export const stopNabraAudio = (): void => {
 
 export const speakWithNabra = async (
   text: string,
-  persona: 'jarvis' | 'gwen' = 'jarvis'
+  persona: 'jarvis' | 'gwen' = 'jarvis',
+  cancelExisting = true
 ): Promise<void> => {
   const clean = sanitizeTextForSpeech(text);
   if (!clean || typeof window === 'undefined') return;
-  stopNabraAudio();
+  if (cancelExisting) {
+    stopNabraAudio();
+  }
 
   const isAr = /[\u0600-\u06FF]/.test(clean);
 
@@ -95,6 +98,11 @@ export const speakWithNabra = async (
         if (voice) utter.voice = voice;
         utter.onend = () => resolve();
         utter.onerror = () => resolve();
+        if (window.speechSynthesis.paused) {
+          try {
+            window.speechSynthesis.resume();
+          } catch {}
+        }
         window.speechSynthesis.speak(utter);
         setTimeout(resolve, 25000);
       });

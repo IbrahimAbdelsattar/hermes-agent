@@ -344,12 +344,13 @@ export const extractNextSpokenSentence = (
   if (!cleanText || startIndex >= cleanText.length) return null;
 
   const unchunked = cleanText.slice(startIndex);
+  const isFirstChunk = startIndex === 0;
 
-  // 1. Check for sentence terminators and clause separators, prioritizing whichever comes first in text
+  // 1. Check for sentence terminators and clause separators, prioritizing whichever comes first
   const sentenceMatch = unchunked.match(/([.!?؛؟\n]+)(?:\s+|$)/);
   const clauseMatch = unchunked.match(/([,،:;—]+)(?:\s+|$)/);
 
-  // If a clause separator occurs before any sentence terminator (e.g. "Understood sir, I will...")
+  // If a clause separator occurs before any sentence terminator (e.g. "Understood sir, I will..." or "تمام،")
   if (
     clauseMatch &&
     clauseMatch.index !== undefined &&
@@ -358,29 +359,58 @@ export const extractNextSpokenSentence = (
     const boundary = clauseMatch.index + clauseMatch[1].length;
     const raw = unchunked.slice(0, boundary).trim();
     const wordCount = raw.split(/\s+/).filter(Boolean).length;
-    if (raw.length >= 10 || wordCount >= 2) {
+    // For the very first chunk, emit on ANY clause boundary (even a 1-word greeting like "Yes," or "تمام،")
+    // For subsequent chunks, require at least 8 chars or 2 words for natural prosody
+    if (isFirstChunk ? raw.length >= 2 : (raw.length >= 8 || wordCount >= 2)) {
       return { sentence: raw, nextIndex: startIndex + boundary };
     }
   }
 
-  // 2. Standard sentence terminators: . ! ? ؟ ؛ or newline
+  // 2. Standard sentence terminators if within prompt speaking distance (<= 32 for first chunk, <= 45 for subsequent)
+  if (sentenceMatch && sentenceMatch.index !== undefined) {
+    const termIndex = sentenceMatch.index;
+    const maxTermDistance = isFirstChunk ? 32 : 45;
+    if (termIndex <= maxTermDistance) {
+      const boundary = termIndex + sentenceMatch[1].length;
+      const raw = unchunked.slice(0, boundary).trim();
+      if (raw.length > 0) {
+        return { sentence: raw, nextIndex: startIndex + boundary };
+      }
+    }
+  }
+
+  // 3. Ultra-fast initial speech: when starting a turn (startIndex === 0), do not wait for
+  // long sentences or distant punctuation. Emit as soon as we have 3-4 words (>= 18 chars)
+  // so speech output begins immediately within ~100-200ms while subsequent tokens generate.
+  if (isFirstChunk && unchunked.length >= 18) {
+    const maxSearch = Math.min(unchunked.length, 30);
+    const spaceIndex = unchunked.lastIndexOf(' ', maxSearch);
+    if (spaceIndex >= 10) {
+      const raw = unchunked.slice(0, spaceIndex).trim();
+      if (raw.length > 0) {
+        return { sentence: raw, nextIndex: startIndex + spaceIndex + 1 };
+      }
+    }
+  }
+
+  // 4. Natural speaking pause for subsequent continuous text (>= 35 chars)
+  if (unchunked.length >= 35) {
+    const maxSearch = Math.min(unchunked.length, 45);
+    const spaceIndex = unchunked.lastIndexOf(' ', maxSearch);
+    if (spaceIndex >= 18) {
+      const raw = unchunked.slice(0, spaceIndex).trim();
+      if (raw.length > 0) {
+        return { sentence: raw, nextIndex: startIndex + spaceIndex + 1 };
+      }
+    }
+  }
+
+  // 5. Final fallback if sentence terminator exists further out but continuous text was under 35 chars
   if (sentenceMatch && sentenceMatch.index !== undefined) {
     const boundary = sentenceMatch.index + sentenceMatch[1].length;
     const raw = unchunked.slice(0, boundary).trim();
     if (raw.length > 0) {
       return { sentence: raw, nextIndex: startIndex + boundary };
-    }
-  }
-
-  // 3. Natural speaking pause: if continuous text reaches >= 40 chars without punctuation,
-  // split at the nearest word boundary so speech begins immediately instead of stalling
-  if (unchunked.length >= 40) {
-    const spaceIndex = unchunked.lastIndexOf(' ', 40);
-    if (spaceIndex >= 20) {
-      const raw = unchunked.slice(0, spaceIndex).trim();
-      if (raw.length > 0) {
-        return { sentence: raw, nextIndex: startIndex + spaceIndex + 1 };
-      }
     }
   }
 

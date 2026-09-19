@@ -351,7 +351,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
               if (sentence.length >= 2) {
                 audioQueue.enqueue(async (signal) => {
                   if (signal.aborted) return;
-                  await speakWithNabra(sentence, 'jarvis');
+                  await speakWithNabra(sentence, 'jarvis', false);
                 });
               }
             }
@@ -368,7 +368,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
           if (remainder.length >= 2) {
             audioQueue.enqueue(async (signal) => {
               if (signal.aborted) return;
-              await speakWithNabra(remainder, 'jarvis');
+              await speakWithNabra(remainder, 'jarvis', false);
             });
           }
         }

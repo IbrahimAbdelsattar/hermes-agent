@@ -51,7 +51,7 @@ describe('speechUtils - Streaming Sentence Pipeline', () => {
     const unpunctuated = 'This is a long continuous stream of words without any punctuation to test the latency split';
     const split = extractNextSpokenSentence(unpunctuated, 0);
     expect(split).not.toBeNull();
-    expect(split?.sentence.length).toBeGreaterThan(25);
+    expect(split?.sentence.length).toBeGreaterThanOrEqual(18);
     expect(unpunctuated.startsWith(split!.sentence)).toBe(true);
   });
 
@@ -123,6 +123,24 @@ describe('speechUtils - Streaming Sentence Pipeline', () => {
 
     const secondAr = extractNextSpokenSentence(clauseAr, firstAr!.nextIndex);
     expect(secondAr?.sentence).toBe('جاري تجهيز كافة البيانات المطلوبة فوراً.');
+
+    // 1-word greeting with comma emits immediately on turn start (TTFA <100ms)
+    const oneWordEn = 'Yes, all parameters are nominal.';
+    const oneWordEnRes = extractNextSpokenSentence(oneWordEn, 0);
+    expect(oneWordEnRes?.sentence).toBe('Yes,');
+    expect(oneWordEnRes?.nextIndex).toBe(4);
+
+    const oneWordAr = 'تمام، جاري الفحص فوراً.';
+    const oneWordArRes = extractNextSpokenSentence(oneWordAr, 0);
+    expect(oneWordArRes?.sentence).toBe('تمام،');
+    expect(oneWordArRes?.nextIndex).toBe(5);
+
+    // Initial 3-4 word phrase emits before punctuation to start speech immediately
+    const earlyWords = 'I am standing by and ready to assist you with everything.';
+    const earlyRes = extractNextSpokenSentence(earlyWords, 0);
+    expect(earlyRes).not.toBeNull();
+    expect(earlyRes?.sentence).toBe('I am standing by and ready to');
+    expect(earlyRes?.nextIndex).toBe(30);
   });
 
   it('selects appropriate male voices for Jarvis and female voices for Gwen', () => {
