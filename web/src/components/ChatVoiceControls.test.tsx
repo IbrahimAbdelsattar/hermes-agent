@@ -136,7 +136,8 @@ describe("ChatVoiceControls", () => {
     expect(socket.send).toHaveBeenLastCalledWith("\r");
   });
 
-  it("submits final speech through the active Hermes chat", async () => {
+  it("submits final speech through the active Hermes chat via Send button or silence timeout", async () => {
+    vi.useFakeTimers();
     const onSubmit = vi.fn(() => true);
     await act(async () => {
       root.render(
@@ -151,9 +152,12 @@ describe("ChatVoiceControls", () => {
 
     await act(async () => {
       button("Mic").click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      vi.advanceTimersByTime(10);
     });
     const recognition = FakeRecognition.instances.at(-1)!;
+    expect(recognition.continuous).toBe(true);
+    expect(recognition.lang).toBe("en-US");
+
     act(() => {
       recognition.onresult?.({
         resultIndex: 0,
@@ -161,8 +165,126 @@ describe("ChatVoiceControls", () => {
       });
     });
 
+    // Instant send button is visible with draft
+    expect(container.textContent).toContain("create a todo");
+    const sendBtn = button("Send");
+    act(() => {
+      sendBtn.click();
+    });
+
     expect(onSubmit).toHaveBeenCalledWith("create a todo");
     expect(container.textContent).toContain("Sent to Hermes");
+    vi.useRealTimers();
+  });
+
+  it("accumulates multiple speech chunks continuously and auto-submits on silence timeout", async () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn(() => true);
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+
+    await act(async () => {
+      button("Mic").click();
+      vi.advanceTimersByTime(10);
+    });
+    const recognition = FakeRecognition.instances.at(-1)!;
+
+    // Chunk 1
+    act(() => {
+      recognition.onresult?.({
+        resultIndex: 0,
+        results: [{ 0: { transcript: "please help me" }, isFinal: true }],
+      });
+    });
+    expect(container.textContent).toContain("please help me");
+
+    // Pause briefly (less than timeout, e.g. 500ms) - should NOT submit yet
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    // Chunk 2 (user continues speaking)
+    act(() => {
+      recognition.onresult?.({
+        resultIndex: 1,
+        results: [
+          { 0: { transcript: "please help me" }, isFinal: true },
+          { 0: { transcript: "write a python test" }, isFinal: true },
+        ],
+      });
+    });
+    expect(container.textContent).toContain("please help me write a python test");
+
+    // Advance past silence timeout
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(onSubmit).toHaveBeenCalledWith("please help me write a python test");
+    expect(container.textContent).toContain("Sent to Hermes");
+    vi.useRealTimers();
+  });
+
+  it("cycles language modes (EN -> عربي -> Auto) and re-starts recognition with the right language", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={() => true}
+        />,
+      );
+    });
+
+    // Default is English as requested
+    expect(container.textContent).toContain("EN");
+
+    // Start mic in English
+    await act(async () => {
+      button("Mic").click();
+      vi.advanceTimersByTime(10);
+    });
+    let rec = FakeRecognition.instances.at(-1)!;
+    expect(rec.lang).toBe("en-US");
+
+    // Toggle to Arabic (عربي)
+    await act(async () => {
+      button("EN").click();
+      vi.advanceTimersByTime(100);
+    });
+    expect(container.textContent).toContain("عربي");
+    rec = FakeRecognition.instances.at(-1)!;
+    expect(rec.lang).toBe("ar-EG");
+
+    // Toggle to Auto
+    await act(async () => {
+      button("عربي").click();
+      vi.advanceTimersByTime(100);
+    });
+    expect(container.textContent).toContain("Auto");
+
+    // In Auto mode, speaking Arabic adapts the lang
+    rec = FakeRecognition.instances.at(-1)!;
+    act(() => {
+      rec.onresult?.({
+        resultIndex: 0,
+        results: [{ 0: { transcript: "عايزك تساعدني" }, isFinal: true }],
+      });
+    });
+    expect(container.textContent).toContain("عايزك تساعدني");
+
+    vi.useRealTimers();
   });
 
   it("speaks streamed assistant sentences and flushes the final clause", async () => {
