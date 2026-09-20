@@ -1,5 +1,14 @@
 import { Button } from "@nous-research/ui/ui/components/button";
-import { Globe, Mic, MicOff, Send, Volume2, VolumeX } from "lucide-react";
+import {
+  Globe,
+  Maximize2,
+  Mic,
+  MicOff,
+  Minimize2,
+  Send,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EventsFeedClient } from "@/lib/eventsFeedClient";
@@ -21,8 +30,10 @@ import {
   type VoiceRecognitionEvent,
 } from "@/lib/chat-voice";
 import { speakWithNabra, stopNabraAudio } from "@/utils/jarvisSpeechUtils";
+import { JarvisUltronVoiceOrb } from "./JarvisUltronVoiceOrb";
 
 const VOICE_LANG_STORAGE_KEY = "hermes_chat_voice_lang";
+const ORB_MODE_STORAGE_KEY = "hermes_chat_orb_mode";
 
 interface ChatVoiceControlsProps {
   channel: string;
@@ -76,6 +87,20 @@ export function ChatVoiceControls({
   const [draft, setDraft] = useState("");
   const [pauseCountdown, setPauseCountdown] = useState<number | null>(null);
 
+  const [stageMode, setStageMode] = useState<"compact" | "expanded">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem(ORB_MODE_STORAGE_KEY);
+        if (saved === "compact" || saved === "expanded") {
+          return saved;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "compact";
+  });
+
   const [languageMode, setLanguageMode] = useState<VoiceLanguageMode>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -92,6 +117,11 @@ export function ChatVoiceControls({
 
   const languageModeRef = useRef<VoiceLanguageMode>(languageMode);
   const activeAutoLangRef = useRef<"en-US" | "ar-EG">("en-US");
+
+  const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
+  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
   const liveEnabledRef = useRef(false);
   const speechEnabledRef = useRef(false);
@@ -116,6 +146,48 @@ export function ChatVoiceControls({
   useEffect(() => {
     languageModeRef.current = languageMode;
   }, [languageMode]);
+
+  const startAudioAnalyser = useCallback(async () => {
+    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      if (!liveEnabledRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      mediaStreamRef.current = stream;
+      const AudioCtxCtor = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxCtor) {
+        const ctx = new AudioCtxCtor();
+        audioContextRef.current = ctx;
+        if (ctx.state === "suspended") {
+          void ctx.resume();
+        }
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.75;
+        source.connect(analyser);
+        setMicAnalyser(analyser);
+      }
+    } catch (e) {
+      console.warn("[ChatVoiceControls] Mic audio analyser setup note:", e);
+    }
+  }, []);
+
+  const stopAudioAnalyser = useCallback(() => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      void audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    setMicAnalyser(null);
+  }, []);
 
   const clearSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
@@ -193,9 +265,10 @@ export function ChatVoiceControls({
       return;
     }
     speakingRef.current = true;
+    setIsAssistantSpeaking(true);
     const generation = speechGenerationRef.current;
     stopRecognition();
-    setStatus("Jarvis speaking");
+    setStatus("Hermes speaking");
     while (
       mountedRef.current &&
       speechEnabledRef.current &&
@@ -207,6 +280,7 @@ export function ChatVoiceControls({
     }
     if (generation !== speechGenerationRef.current) return;
     speakingRef.current = false;
+    setIsAssistantSpeaking(false);
     maybeResumeListening();
   }, [maybeResumeListening, stopRecognition]);
 
@@ -395,12 +469,14 @@ export function ChatVoiceControls({
     if (next) {
       setStatus(connected ? "Starting microphone" : "Chat is reconnecting");
       window.setTimeout(() => startListeningRef.current(), 0);
+      void startAudioAnalyser();
     } else {
       waitingForReplyRef.current = false;
       stopRecognition();
+      stopAudioAnalyser();
       setStatus("Microphone off");
     }
-  }, [clearSilenceTimer, connected, stopRecognition]);
+  }, [clearSilenceTimer, connected, startAudioAnalyser, stopAudioAnalyser, stopRecognition]);
 
   const toggleLanguage = useCallback(() => {
     const prev = languageModeRef.current;
@@ -426,6 +502,17 @@ export function ChatVoiceControls({
     }
   }, [stopRecognition]);
 
+  const toggleStageMode = useCallback((mode: "compact" | "expanded") => {
+    setStageMode(mode);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(ORB_MODE_STORAGE_KEY, mode);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
   const toggleSpeech = useCallback(() => {
     const next = !speechEnabledRef.current;
     speechEnabledRef.current = next;
@@ -437,6 +524,7 @@ export function ChatVoiceControls({
       speechGenerationRef.current += 1;
       speechQueueRef.current = [];
       speakingRef.current = false;
+      setIsAssistantSpeaking(false);
       stopNabraAudio();
       setStatus("Spoken replies off");
       maybeResumeListening();
@@ -449,9 +537,10 @@ export function ChatVoiceControls({
       mountedRef.current = false;
       clearSilenceTimer();
       stopRecognition();
+      stopAudioAnalyser();
       stopNabraAudio();
     };
-  }, [clearSilenceTimer, stopRecognition]);
+  }, [clearSilenceTimer, stopAudioAnalyser, stopRecognition]);
 
   useEffect(() => {
     if (!connected) {
@@ -501,6 +590,7 @@ export function ChatVoiceControls({
       speechGenerationRef.current += 1;
       speechQueueRef.current = [];
       speakingRef.current = false;
+      setIsAssistantSpeaking(false);
       stopRecognition();
       stopNabraAudio();
       setDraft("");
@@ -553,65 +643,187 @@ export function ChatVoiceControls({
         : "Language: Auto-Adaptive (click to switch to English)";
 
   return (
-    <div
-      className="mb-2 flex shrink-0 flex-wrap items-center gap-2 rounded border border-current/20 bg-black/25 px-2 py-1.5 text-xs"
-      style={{ color: foreground }}
-      aria-label="Hermes chat voice controls"
-    >
-      <Button
-        ghost
-        size="sm"
-        onClick={toggleLive}
-        disabled={!voiceSupported}
-        aria-pressed={liveEnabled}
-        title={
-          voiceSupported
-            ? "Toggle hands-free speech recognition"
-            : "Speech recognition unavailable"
-        }
-        className="h-7 gap-1.5 border border-current/25 px-2"
-      >
-        {liveEnabled ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
-        {listening ? "Listening" : liveEnabled ? "Live mic" : "Mic"}
-      </Button>
-      <Button
-        ghost
-        size="sm"
-        onClick={toggleLanguage}
-        title={langTitle}
-        aria-label={`Speech recognition language: ${langLabel}`}
-        className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
-      >
-        <Globe className="h-3.5 w-3.5 opacity-80" />
-        <span>{langLabel}</span>
-      </Button>
-      <Button
-        ghost
-        size="sm"
-        onClick={toggleSpeech}
-        aria-pressed={speechEnabled}
-        title="Toggle spoken Hermes replies"
-        className="h-7 gap-1.5 border border-current/25 px-2"
-      >
-        {speechEnabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-        {speechEnabled ? "Voice on" : "Voice off"}
-      </Button>
-      {draft ? (
-        <Button
-          ghost
-          size="sm"
-          onClick={() => void submitCurrentDraft()}
-          title="Send now without waiting for pause"
-          className="h-7 gap-1 border border-success/40 bg-success/15 px-2 text-success hover:bg-success/25"
+    <div className="mb-2 flex shrink-0 flex-col gap-1.5" style={{ color: foreground }}>
+      {stageMode === "expanded" ? (
+        <div className="relative w-full overflow-hidden rounded-xl border border-[#00d2c4]/30 bg-gradient-to-b from-[#00d2c4]/15 via-black/70 to-black/90 p-3 shadow-2xl backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-[#00d2c4]/20 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="size-2 rounded-full bg-[#00d2c4] animate-pulse" />
+              <span className="font-mono text-xs font-bold tracking-widest text-[#00d2c4] uppercase">
+                Hermes Quantum Stage
+              </span>
+              <span className="rounded bg-[#00d2c4]/15 px-1.5 py-0.5 font-mono text-[10px] text-[#00d2c4]/90">
+                {listening ? "LISTENING" : isAssistantSpeaking ? "SPEAKING" : "STANDBY"}
+              </span>
+            </div>
+            <Button
+              ghost
+              size="sm"
+              onClick={() => toggleStageMode("compact")}
+              title="Minimize to compact bar"
+              aria-label="Minimize 3D Voice Stage"
+              className="h-6 w-6 p-0 border border-white/10 hover:border-[#00d2c4]/40"
+            >
+              <Minimize2 className="h-3 w-3 text-white/70" />
+            </Button>
+          </div>
+
+          <div className="relative my-2 flex h-[190px] w-full items-center justify-center overflow-hidden">
+            <JarvisUltronVoiceOrb
+              themeMode="hermes"
+              isActive={liveEnabled || speechEnabled}
+              isSpeaking={isAssistantSpeaking}
+              isUserSpeaking={listening && Boolean(draft)}
+              analyser={micAnalyser}
+              className="w-full"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2 text-xs">
+            <Button
+              ghost
+              size="sm"
+              onClick={toggleLive}
+              disabled={!voiceSupported}
+              aria-pressed={liveEnabled}
+              title={
+                voiceSupported
+                  ? "Toggle hands-free speech recognition"
+                  : "Speech recognition unavailable"
+              }
+              className="h-7 gap-1.5 border border-current/25 px-2 hover:border-[#00d2c4]/50"
+            >
+              {liveEnabled ? <Mic className="h-3.5 w-3.5 text-[#00d2c4]" /> : <MicOff className="h-3.5 w-3.5" />}
+              {listening ? "Listening" : liveEnabled ? "Live mic" : "Mic"}
+            </Button>
+            <Button
+              ghost
+              size="sm"
+              onClick={toggleLanguage}
+              title={langTitle}
+              aria-label={`Speech recognition language: ${langLabel}`}
+              className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+            >
+              <Globe className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
+              <span>{langLabel}</span>
+            </Button>
+            <Button
+              ghost
+              size="sm"
+              onClick={toggleSpeech}
+              aria-pressed={speechEnabled}
+              title="Toggle spoken Hermes replies"
+              className="h-7 gap-1.5 border border-current/25 px-2"
+            >
+              {speechEnabled ? <Volume2 className="h-3.5 w-3.5 text-[#00d2c4]" /> : <VolumeX className="h-3.5 w-3.5" />}
+              {speechEnabled ? "Voice on" : "Voice off"}
+            </Button>
+            {draft ? (
+              <Button
+                ghost
+                size="sm"
+                onClick={() => void submitCurrentDraft()}
+                title="Send now without waiting for pause"
+                className="h-7 gap-1 border border-success/40 bg-success/15 px-2 text-success hover:bg-success/25"
+              >
+                <Send className="h-3.5 w-3.5" />
+                <span>Send{pauseCountdown ? ` (${pauseCountdown}s)` : ""}</span>
+              </Button>
+            ) : null}
+            <span className="min-w-0 flex-1 truncate opacity-75" role="status">
+              {draft || status}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-[#00d2c4]/25 bg-black/40 px-2 py-1.5 text-xs shadow-lg backdrop-blur-md"
+          aria-label="Hermes chat voice controls"
         >
-          <Send className="h-3.5 w-3.5" />
-          <span>Send{pauseCountdown ? ` (${pauseCountdown}s)` : ""}</span>
-        </Button>
-      ) : null}
-      <span className="min-w-0 flex-1 truncate opacity-75" role="status">
-        {draft || status}
-      </span>
+          {/* Mini 3D Voice Orb */}
+          <div
+            className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#00d2c4]/40 bg-black/60 shadow-[0_0_12px_rgba(0,210,196,0.3)] cursor-pointer hover:scale-105 transition-transform"
+            onClick={() => toggleStageMode("expanded")}
+            title="Click to open full 3D Quantum Voice Stage"
+          >
+            <JarvisUltronVoiceOrb
+              isMini
+              themeMode="hermes"
+              isActive={liveEnabled || speechEnabled}
+              isSpeaking={isAssistantSpeaking}
+              isUserSpeaking={listening && Boolean(draft)}
+              analyser={micAnalyser}
+              className="h-full w-full pointer-events-none"
+            />
+          </div>
+
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleLive}
+            disabled={!voiceSupported}
+            aria-pressed={liveEnabled}
+            title={
+              voiceSupported
+                ? "Toggle hands-free speech recognition"
+                : "Speech recognition unavailable"
+            }
+            className="h-7 gap-1.5 border border-current/25 px-2 hover:border-[#00d2c4]/50"
+          >
+            {liveEnabled ? <Mic className="h-3.5 w-3.5 text-[#00d2c4]" /> : <MicOff className="h-3.5 w-3.5" />}
+            {listening ? "Listening" : liveEnabled ? "Live mic" : "Mic"}
+          </Button>
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleLanguage}
+            title={langTitle}
+            aria-label={`Speech recognition language: ${langLabel}`}
+            className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+          >
+            <Globe className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
+            <span>{langLabel}</span>
+          </Button>
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleSpeech}
+            aria-pressed={speechEnabled}
+            title="Toggle spoken Hermes replies"
+            className="h-7 gap-1.5 border border-current/25 px-2"
+          >
+            {speechEnabled ? <Volume2 className="h-3.5 w-3.5 text-[#00d2c4]" /> : <VolumeX className="h-3.5 w-3.5" />}
+            {speechEnabled ? "Voice on" : "Voice off"}
+          </Button>
+          {draft ? (
+            <Button
+              ghost
+              size="sm"
+              onClick={() => void submitCurrentDraft()}
+              title="Send now without waiting for pause"
+              className="h-7 gap-1 border border-success/40 bg-success/15 px-2 text-success hover:bg-success/25"
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span>Send{pauseCountdown ? ` (${pauseCountdown}s)` : ""}</span>
+            </Button>
+          ) : null}
+          <span className="min-w-0 flex-1 truncate opacity-75" role="status">
+            {draft || status}
+          </span>
+          <Button
+            ghost
+            size="sm"
+            onClick={() => toggleStageMode("expanded")}
+            title="Expand 3D Neural Voice Stage"
+            aria-label="Expand 3D Voice Stage"
+            className="h-7 w-7 p-0 border border-current/20 text-[#00d2c4] hover:border-[#00d2c4]/60"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
+
 

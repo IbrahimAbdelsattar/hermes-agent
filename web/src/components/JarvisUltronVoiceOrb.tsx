@@ -12,7 +12,7 @@ import {
   Flame,
 } from 'lucide-react';
 
-export type OrbTheme = 'jarvis' | 'ultron' | 'gwen';
+export type OrbTheme = 'hermes' | 'jarvis' | 'ultron' | 'gwen';
 export type VisualizerMode = 'neural_orb' | 'arc_reactor' | 'waveform_matrix';
 
 export interface JarvisUltronVoiceOrbProps {
@@ -28,6 +28,7 @@ export interface JarvisUltronVoiceOrbProps {
   onThemeChange?: (theme: OrbTheme) => void;
   className?: string;
   sampleRate?: number;
+  isMini?: boolean;
 }
 
 interface Particle {
@@ -81,6 +82,7 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
   onThemeChange,
   className = '',
   sampleRate = 48000,
+  isMini = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -129,6 +131,26 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
   // Color palette configuration based on active theme
   const themePalette = useMemo(() => {
     switch (currentTheme) {
+      case 'hermes':
+        return {
+          name: 'HERMES QUANTUM ORB',
+          subtitle: 'NEURAL TELECOMM PROTOCOL',
+          primary: '#00d2c4',
+          secondary: '#14b8a6',
+          tertiary: '#2dd4bf',
+          glow: 'rgba(0, 210, 196, 0.45)',
+          glowSubtle: 'rgba(0, 210, 196, 0.15)',
+          coreInner: '#ffffff',
+          coreMid: '#00d2c4',
+          coreOuter: '#0f766e',
+          lightningColor: '#99f6e4',
+          particleColors: ['#00d2c4', '#14b8a6', '#2dd4bf', '#99f6e4', '#ffffff'],
+          border: 'border-[#00d2c4]/50',
+          bgGlow: 'from-[#00d2c4]/15 via-slate-950 to-teal-950/30',
+          badgeText: 'text-[#00d2c4]',
+          badgeBg: 'bg-teal-950/80 border-[#00d2c4]/50',
+          accent: '#00d2c4',
+        };
       case 'ultron':
         return {
           name: 'ULTRON PROTOCOL',
@@ -328,7 +350,9 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
       const cx = width / 2;
       const cy = height / 2;
       const maxDim = Math.min(width, height);
-      const baseOrbRadius = Math.max(35, maxDim * (isExpanded ? 0.28 : 0.23));
+      const baseOrbRadius = isMini
+        ? Math.max(12, maxDim * 0.4)
+        : Math.max(35, maxDim * (isExpanded ? 0.28 : 0.23));
 
       // Frequency Audio Analysis
       const targetAnalyser = isSpeaking ? outputAnalyser || analyser : analyser;
@@ -789,6 +813,27 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
     sphereNodes,
   ]);
 
+  if (isMini) {
+    return (
+      <div
+        ref={containerRef}
+        className={`relative flex items-center justify-center overflow-hidden select-none ${className}`}
+      >
+        <canvas
+          ref={canvasRef}
+          className="h-full w-full rounded-full cursor-pointer filter drop-shadow-[0_0_12px_rgba(0,210,196,0.4)]"
+          onClick={() => {
+            if (currentTheme === 'hermes') handleToggleTheme('jarvis');
+            else if (currentTheme === 'jarvis') handleToggleTheme('ultron');
+            else if (currentTheme === 'ultron') handleToggleTheme('gwen');
+            else handleToggleTheme('hermes');
+          }}
+          title="Hermes 3D Neural Voice Orb — Click to cycle theme"
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
@@ -930,11 +975,12 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
           }`}
           onClick={() => {
             // Click to cycle theme or toggle expansion
-            if (currentTheme === 'jarvis') handleToggleTheme('ultron');
+            if (currentTheme === 'hermes') handleToggleTheme('jarvis');
+            else if (currentTheme === 'jarvis') handleToggleTheme('ultron');
             else if (currentTheme === 'ultron') handleToggleTheme('gwen');
-            else handleToggleTheme('jarvis');
+            else handleToggleTheme('hermes');
           }}
-          title="Click the Orb to cycle protocols (JARVIS → ULTRON → GWEN)"
+          title="Click the Orb to cycle protocols (HERMES → JARVIS → ULTRON → GWEN)"
         />
 
         {/* Floating Futuristic HUD Telemetry Panels */}
