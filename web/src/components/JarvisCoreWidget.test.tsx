@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JarvisCoreWidget } from "./JarvisCoreWidget";
 
 let container: HTMLDivElement;
@@ -106,5 +106,34 @@ describe("JarvisCoreWidget", () => {
     });
 
     expect(deepWorkBtn?.className).toContain("bg-amber-400");
+  });
+
+  it("executes repeated commands through Hermes instead of replaying a cached answer", async () => {
+    const onSendMessage = vi.fn(async () => "done");
+    await act(async () => {
+      root.render(<JarvisCoreWidget onSendMessage={onSendMessage} />);
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder^="Command J.A.R.V.I.S."]',
+    )!;
+    const send = input.parentElement?.querySelector<HTMLButtonElement>("button");
+    if (!send) throw new Error("send button not found");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        setter?.call(input, "check deployment");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        send.click();
+        await Promise.resolve();
+      });
+    }
+
+    expect(onSendMessage).toHaveBeenCalledTimes(2);
   });
 });

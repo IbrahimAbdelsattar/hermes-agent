@@ -26,6 +26,9 @@ vi.mock("@/lib/gatewayClient", () => {
       on() {
         return () => {};
       }
+      onState() {
+        return () => {};
+      }
     },
   };
 });
@@ -182,4 +185,3 @@ describe("JarvisCallPage", () => {
     });
   });
 });
-
