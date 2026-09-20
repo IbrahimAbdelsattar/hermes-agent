@@ -40,7 +40,6 @@ import {
   PipelinedAudioQueue,
   sanitizeTextForSpeech,
 } from '@/lib/speechUtils';
-import { cacheEngine } from '@/utils/jarvisCacheManager';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { JarvisNetworkGraph, type GraphNode } from '@/components/JarvisNetworkGraph';
 import {
@@ -123,7 +122,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
 
   // Daily Focus Timer Effect
   useEffect(() => {
-    let timerId: any = null;
+    let timerId: ReturnType<typeof setInterval> | null = null;
     if (isFocusGoalActive && !isFocusCompleted) {
       timerId = setInterval(() => {
         setFocusElapsedSeconds((prev) => {
@@ -206,7 +205,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
 
   // Pomodoro Timer Countdown
   useEffect(() => {
-    let timerId: any = null;
+    let timerId: ReturnType<typeof setInterval> | null = null;
     if (isPomodoroActive && timeLeft > 0) {
       timerId = setInterval(() => {
         setTimeLeft((prev) => prev - 1);
@@ -312,11 +311,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
     try {
       let replyContent = '';
 
-      // Check client AI response cache
-      const cached = cacheEngine.getCachedAnswer('jarvis_chief', textToSend);
-      if (cached) {
-        replyContent = cached.replyText;
-      } else if (onSendMessage) {
+      if (onSendMessage) {
         // Send via Hermes Gateway (same mechanism as hermes chat: raw text +
         // surface voice-live; backend injects the concise voice note). Stream
         // deltas into a live bubble so the first token paints immediately.
@@ -359,7 +354,6 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         });
         // Replace the streaming placeholder with the authoritative reply.
         setMessages((prev) => prev.filter((m) => m.id !== streamingId));
-        cacheEngine.setCachedAnswer('jarvis_chief', textToSend, replyContent);
 
         // Enqueue remaining un-spoken text
         if (audioQueue && isSpeechEnabled) {
@@ -376,7 +370,6 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         // Fallback realistic response grounded in Ibrahim's stack
         await new Promise((r) => setTimeout(r, 900));
         replyContent = `يا باشمهندس إبراهيم، تلقيت أمرك: "${textToSend}". تم فحص مشاريعك على GitHub وخوادم Google Cloud المرتبطة (${biometrics.energyLevel}% طاقة، ${biometrics.focusScore}% تركيز). يتم تنفيذ الخطوات المطلوبة ومزامنة كود المشروع وتحديث السجلات بنجاح.`;
-        cacheEngine.setCachedAnswer('jarvis_chief', textToSend, replyContent);
       }
 
       const jarvisReply: JarvisMessage = {
@@ -385,21 +378,21 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         content: replyContent,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         technicalKeywords: extractTechnicalKeywords(replyContent),
-        isCached: !!cached,
       };
 
       setMessages((prev) => [...prev, jarvisReply]);
-      // If onSendMessage was used with audioQueue, speech already started playing in real-time!
-      // Only speak whole reply if cached or fallback
-      if (isSpeechEnabled && (!onSendMessage || cached)) {
+      // Gateway replies are spoken from their streaming queue; the local
+      // fallback has no stream, so speak it after completion.
+      if (isSpeechEnabled && !onSendMessage) {
         void speakText(replyContent);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn('Chat error:', err);
+      const message = err instanceof Error ? err.message : 'Unknown error';
       const errorReply: JarvisMessage = {
         id: `j-${Date.now()}`,
         sender: 'jarvis',
-        content: `يا باشمهندس، حدث خطأ أثناء الاتصال بالخادم: ${err?.message || 'Unknown error'}. يرجى التحقق من اتصال بوابة Hermes.`,
+        content: `يا باشمهندس، حدث خطأ أثناء الاتصال بالخادم: ${message}. يرجى التحقق من اتصال بوابة Hermes.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorReply]);

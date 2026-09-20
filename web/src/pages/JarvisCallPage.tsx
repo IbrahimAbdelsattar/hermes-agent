@@ -8,94 +8,11 @@ import { JarvisCoreWidget } from "@/components/JarvisCoreWidget";
 import { MusicPlayerWidget } from "@/components/MusicPlayerWidget";
 import { LiveWorldFeedWidget } from "@/components/LiveWorldFeedWidget";
 import { GatewayClient } from "@/lib/gatewayClient";
+import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { api, type SessionInfo } from "@/lib/api";
-import { parseMusicCommand } from "@/utils/musicCommander";
+import { submitJarvisTurn } from "@/lib/jarvis-turn";
 
 export type JarvisTab = "call" | "core" | "music" | "feed";
-
-// ── Jarvis fast-path: deterministic local intents ────────────────────────────
-// Hermes text chat tolerates multi-second agent turns; voice does not. Anything
-// the client can answer deterministically (music transport, greetings, thanks,
-// farewells, bare acknowledgements) resolves here in <50ms with NO gateway
-// turn — no session resume, no model TTFB, no tool loop. Only genuine requests
-// reach prompt.submit. Ephemeral by design: nothing here needs agent memory.
-
-const SMALLTALK_PATTERNS: Array<{ re: RegExp; ar: string; en: string }> = [
-  {
-    re: /^(سلام|هلا|اهلا|أهلا|اهلين|صباح الخير|مساء الخير|ازيك|عامل ايه|هاي|هالو)\b/i,
-    ar: "أهلاً يا فندم، مع حضرتك.",
-    en: "",
-  },
-  {
-    re: /^(hi|hello|hey|good morning|good afternoon|good evening)\b/i,
-    ar: "",
-    en: "Hello, sir. How can I help?",
-  },
-  {
-    re: /^(شكرا|متشكر|تسلم|الف شكر|ممنون)/i,
-    ar: "تحت أمرك يا فندم في أي وقت.",
-    en: "",
-  },
-  {
-    re: /^(thank|thanks|thx|appreciated)\b/i,
-    ar: "",
-    en: "At your service, sir.",
-  },
-  {
-    re: /^(مع السلامه|باي|سلام|تصبح على خير|اشوفك)/i,
-    ar: "مع السلامة يا فندم.",
-    en: "",
-  },
-  {
-    re: /^(bye|goodbye|good night|see you)\b/i,
-    ar: "",
-    en: "Goodbye, sir.",
-  },
-  {
-    re: /^(تمام|ماشي|اوك|أوك|حاضر|طيب|عاش|جميل|ممتاز|تمام جدا)\s*[.!؟?]*$/i,
-    ar: "تمام يا فندم.",
-    en: "",
-  },
-  {
-    re: /^(ok|okay|fine|great|perfect|nice|cool|got it)\s*[.!?]*$/i,
-    ar: "",
-    en: "Understood, sir.",
-  },
-];
-
-function resolveJarvisLocalIntent(
-  rawText: string,
-  persona: VoicePersona,
-): { reply: string; musicAction: string | null } | null {
-  const text = rawText.trim();
-  if (!text) return null;
-  const isAr = /[\u0600-\u06FF]/.test(text);
-  const isGwen = persona === "gwen";
-
-  // Music transport: local side-effect + instant ack, no LLM turn.
-  const musicCmd = parseMusicCommand(text);
-  if (musicCmd) {
-    const a = musicCmd.action;
-    let reply: string;
-    if (a === "pause") reply = isAr ? (isGwen ? "وقفت الموسيقى يا باشا." : "تم إيقاف الموسيقى يا فندم.") : isGwen ? "Music paused, boss!" : "Music paused, sir.";
-    else if (a === "resume") reply = isAr ? (isGwen ? "رجعت الموسيقى يا باشا." : "تم استئناف الموسيقى يا فندم.") : isGwen ? "Music resumed, boss!" : "Music resumed, sir.";
-    else if (a === "next") reply = isAr ? (isGwen ? "التراك اللي بعده يا باشا." : "التراك التالي يا فندم.") : isGwen ? "Next track, boss!" : "Next track, sir.";
-    else if (a === "prev") reply = isAr ? (isGwen ? "التراك اللي قبله يا باشا." : "التراك السابق يا فندم.") : isGwen ? "Previous track, boss!" : "Previous track, sir.";
-    else reply = isAr ? (isGwen ? "بشغل الموسيقى حالاً يا باشا." : "جاري تشغيل الموسيقى يا فندم.") : isGwen ? "Playing music, boss!" : "Playing music, sir.";
-    return { reply, musicAction: a };
-  }
-
-  // Small-talk: only for SHORT messages so real questions always reach the agent.
-  if (text.length <= 40) {
-    for (const p of SMALLTALK_PATTERNS) {
-      if (p.re.test(text)) {
-        const reply = isAr ? p.ar || p.en : p.en || p.ar;
-        if (reply) return { reply, musicAction: null };
-      }
-    }
-  }
-  return null;
-}
 
 function safeGetStorage(key: string): string | null {
   try {
@@ -163,7 +80,11 @@ export default function JarvisCallPage() {
   const gatewayRef = useRef<GatewayClient | null>(null);
   const liveSessionIdRef = useRef<string | null>(null);
   const storedSessionIdRef = useRef<string | null>(null);
-  const lastSessionRefreshRef = useRef<number>(0);
+  const activeTurnRef = useRef<AbortController | null>(null);
+  const [turnActivity, setTurnActivity] = useState("");
+  const [modelPickerSession, setModelPickerSession] = useState<string | null>(null);
+  const [modelPickerGateway, setModelPickerGateway] = useState<GatewayClient | null>(null);
+  const [sessionError, setSessionError] = useState("");
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
     return safeGetStorage("JARVIS_ACTIVE_SESSION_ID");
@@ -174,12 +95,15 @@ export default function JarvisCallPage() {
   const [initialMessages, setInitialMessages] = useState<CallMessage[]>([]);
   const [musicPlayback, setMusicPlayback] = useState<{
     isPlaying: boolean;
-    currentTrack: any;
+    currentTrack?: { title?: string; artist?: string } | null;
   } | null>(null);
 
   useEffect(() => {
     const handleMusicState = (e: Event) => {
-      const customEvent = e as CustomEvent<any>;
+      const customEvent = e as CustomEvent<{
+        isPlaying?: boolean;
+        currentTrack?: { title?: string; artist?: string } | null;
+      }>;
       if (customEvent.detail) {
         setMusicPlayback({
           isPlaying: !!customEvent.detail.isPlaying,
@@ -273,6 +197,7 @@ export default function JarvisCallPage() {
 
   const handleSelectSession = useCallback(
     async (sid: string) => {
+      if (activeTurnRef.current) return;
       storedSessionIdRef.current = sid;
       liveSessionIdRef.current = null;
       setActiveSessionId(sid);
@@ -336,6 +261,7 @@ export default function JarvisCallPage() {
   );
 
   const handleNewSession = useCallback(() => {
+    if (activeTurnRef.current) return;
     liveSessionIdRef.current = null;
     storedSessionIdRef.current = null;
     setActiveSessionId(null);
@@ -369,11 +295,16 @@ export default function JarvisCallPage() {
   useEffect(() => {
     const gw = new GatewayClient();
     gatewayRef.current = gw;
+    const offState = gw.onState(state => {
+      if (state === "closed" || state === "error") liveSessionIdRef.current = null;
+    });
     gw.connect().catch((err) => {
       console.warn("[jarvis] Gateway connection deferred or offline:", err);
     });
 
     return () => {
+      activeTurnRef.current?.abort();
+      offState();
       gw.close();
       gatewayRef.current = null;
     };
@@ -451,296 +382,41 @@ export default function JarvisCallPage() {
       _language: CallLanguage = "Arabic",
       onDelta?: (partial: string) => void,
     ): Promise<string> => {
-      // Fast-path first: local intents resolve BEFORE any gateway I/O, so a
-      // music tap or "شكراً" never pays session-resume + model TTFB + tool loop.
-      const local = resolveJarvisLocalIntent(text, persona);
-      if (local) {
-        if (local.musicAction) {
-          window.dispatchEvent(
-            new CustomEvent("jarvis:music:command", {
-              detail: { action: local.musicAction },
-            })
-          );
-        }
-        try {
-          onDelta?.(local.reply);
-        } catch {
-          /* streaming display is best-effort */
-        }
-        return local.reply;
-      }
-
+      if (activeTurnRef.current) throw new Error("Jarvis is still handling the previous request.");
       const gw = gatewayRef.current;
-      if (!gw) {
-        throw new Error("Gateway client not initialized");
-      }
-
-      const sessionInfo = await ensureGatewaySession(persona);
-      let currentRuntimeSid = sessionInfo.runtimeSid;
-      const currentStoredSid = sessionInfo.storedSid;
-
-      const musicCmd = parseMusicCommand(text);
-      if (musicCmd) {
-        window.dispatchEvent(
-          new CustomEvent("jarvis:music:command", {
-            detail: musicCmd,
-          })
-        );
-      }
-
-      // Hermes-chat mechanism: send the RAW user text with surface
-      // "voice-live" and let the backend prepend VOICE_LIVE_TURN_NOTE to the
-      // MODEL INPUT ONLY (tui_gateway/session_notifications._prepend_note).
-      // The old code prepended a ~400-token personaInstruction to the
-      // PERSISTED text on every turn, which broke per-conversation prompt
-      // caching, polluted history, and added seconds of TTFB before the
-      // model could "understand" the answer. Hermes chat never does that —
-      // it sends what the user typed. Music side-effects are already
-      // dispatched via the window event above; they don't belong in the prompt.
-
-      return new Promise<string>((resolve, reject) => {
-        let fullText = "";
-        let settled = false;
-
-        let timeout: any = null;
-        const offFns: Array<() => void> = [];
-
-        // Voice turns routinely run tools / reasoning for a minute+ before the
-        // first token. The old 45s idle timeout fired while the backend was
-        // still working (tool.start / tool.complete don't reset it), surfacing
-        // as "Voice response timed out" -> "Unable to communicate with the core
-        // intelligence". Keep-alive must cover every turn-activity event.
-        const IDLE_TIMEOUT_MS = 120000;
-        const DELTA_KEEPALIVE_MS = 60000;
-        const ACTIVITY_KEEPALIVE_MS = 120000;
-
-        const cleanup = () => {
-          settled = true;
-          if (timeout) clearTimeout(timeout);
-          for (const off of offFns) {
-            try {
-              off();
-            } catch {
-              /* best-effort */
-            }
-          }
-          offFns.length = 0;
-        };
-
-        const resetTimeout = (ms = IDLE_TIMEOUT_MS) => {
-          if (settled) return;
-          if (timeout) clearTimeout(timeout);
-          timeout = setTimeout(() => {
-            if (settled) return;
-            cleanup();
-            if (fullText.trim()) {
-              resolve(fullText.trim());
-            } else {
-              reject(new Error("Voice response timed out"));
-            }
-          }, ms);
-        };
-
-        resetTimeout(IDLE_TIMEOUT_MS);
-
-        const matchSession = (evSid?: string) => {
-          if (!evSid) return true;
-          return evSid === currentRuntimeSid || evSid === currentStoredSid;
-        };
-
-        const noteActivity = (ms = ACTIVITY_KEEPALIVE_MS) => {
-          resetTimeout(ms);
-        };
-
-        const track = (off: () => void) => {
-          offFns.push(off);
-          return off;
-        };
-
-        track(
-          gw.on("message.delta", (ev) => {
-            if (matchSession(ev.session_id) && (ev.payload as any)?.text) {
-              fullText += (ev.payload as any).text;
-              // Hermes-chat mechanism: stream tokens immediately like the TUI
-              // does, instead of waiting for message.complete. This is what
-              // removes the perceived "takes more time to understand" delay.
-              try {
-                onDelta?.(fullText);
-              } catch {
-                /* streaming display is best-effort */
-              }
-              resetTimeout(DELTA_KEEPALIVE_MS);
-            }
-          })
-        );
-
-        track(
-          gw.on("status.update", (ev) => {
-            if (matchSession(ev.session_id)) {
-              // Extend timeout when Hermes is executing tools or reasoning
-              noteActivity();
-            }
-          })
-        );
-
-        track(
-          gw.on("reasoning.delta", (ev) => {
-            if (matchSession(ev.session_id)) {
-              // Extend timeout when reasoning / tool activity arrives
-              noteActivity();
-            }
-          })
-        );
-
-        // Any other turn-activity event proves the backend is alive: tool
-        // execution, interim commentary, usage ticks, turn start. Without these
-        // a long tool run with no text delta looked like a dead backend.
-        const activityEvents = [
-          "message.start",
-          "message.interim",
-          "reasoning.available",
-          "thinking.delta",
-          "tool.start",
-          "tool.generating",
-          "tool.complete",
-          "session.usage",
-          "notification.show",
-        ] as const;
-        for (const type of activityEvents) {
-          try {
-            track(
-              gw.on(type as any, (ev: any) => {
-                if (matchSession(ev?.session_id)) {
-                  noteActivity();
-                }
-              })
-            );
-          } catch {
-            /* unknown event name on older client — ignore */
-          }
-        }
-
-        // Belt-and-braces: future event types also keep the turn alive.
+      if (!gw) throw new Error("Gateway client not initialized");
+      const controller = new AbortController();
+      activeTurnRef.current = controller;
+      setTurnActivity("Connecting to Hermes");
+      try {
+        let session = await ensureGatewaySession(persona);
+        const submit = () => submitJarvisTurn(gw, {
+          sessionId: session.runtimeSid,
+          storedSessionId: session.storedSid,
+          text,
+          voiceContext: `${persona === "gwen" ? "Gwen" : "Jarvis"} voice, ${_language}. Short spoken sentences; report only verified results.`,
+          signal: controller.signal,
+          onDelta,
+          onActivity: setTurnActivity,
+        });
+        let reply: string;
         try {
-          const maybeOnAny = (gw as unknown as { onAny?: (h: (ev: any) => void) => () => void }).onAny;
-          if (typeof maybeOnAny === "function") {
-            track(
-              maybeOnAny.call(gw, (ev: any) => {
-                if (ev && typeof ev.type === "string" && matchSession(ev.session_id)) {
-                  if (
-                    ev.type !== "message.delta" &&
-                    ev.type !== "message.complete" &&
-                    ev.type !== "error"
-                  ) {
-                    noteActivity();
-                  }
-                }
-              })
-            );
-          }
-        } catch {
-          /* onAny unavailable on test mocks — explicit handlers above suffice */
+          reply = await submit();
+        } catch (error) {
+          // Retry only a rejected, missing session; never replay a possibly executed task.
+          if (controller.signal.aborted || (error as { code?: number })?.code !== 4001) throw error;
+          liveSessionIdRef.current = null;
+          session = await ensureGatewaySession(persona);
+          reply = await submit();
         }
-
-        track(
-          gw.on("message.complete", (ev) => {
-            if (matchSession(ev.session_id)) {
-              cleanup();
-              // Session-list refresh is bookkeeping, not part of the reply path:
-              // throttle it so back-to-back voice turns don't serialize behind a
-              // REST round-trip before the next turn can start.
-              try {
-                const now = Date.now();
-                const last = lastSessionRefreshRef.current || 0;
-                if (now - last > 30000) {
-                  lastSessionRefreshRef.current = now;
-                  void refreshCallSessions();
-                }
-              } catch {
-                /* bookkeeping is best-effort */
-              }
-              const finalReply = fullText.trim() || String((ev.payload as any)?.text || "").trim();
-              resolve(
-                finalReply ||
-                  (persona === "gwen"
-                    ? "تمام يا باشا، كل شيء جاهز وتحت السيطرة!"
-                    : "Understood, sir. Systems operational and standing by.")
-              );
-            }
-          })
-        );
-
-        track(
-          gw.on("error", (ev) => {
-            if (matchSession(ev.session_id)) {
-              cleanup();
-              reject(new Error(String((ev.payload as any)?.message || "Agent error received")));
-            }
-          })
-        );
-
-        // Short by design: this rides the MODEL INPUT every turn (never the
-        // persisted history, so prompt caching survives), and every extra token
-        // delays the first streamed token. The backend's VOICE_LIVE_TURN_NOTE
-        // already carries the spoken-dialogue contract.
-        const voiceContext = `${persona === "gwen" ? "Gwen" : "Jarvis"} voice, ${_language}. Short spoken sentences, no lists, no <think>, speak now.`;
-
-        const submitPrompt = (sidToSubmit: string) => {
-          gw.request("prompt.submit", {
-            session_id: sidToSubmit,
-            text,
-            surface: "voice-live",
-            voice_context: voiceContext,
-          }).then(
-            (res: unknown) => {
-              if (settled) return;
-              // A busy session ACKs {status: "queued"/"steered"/"redirected"} and
-              // runs the turn later — give it the full activity window instead
-              // of the idle timeout.
-              const status =
-                res && typeof res === "object" ? String((res as Record<string, unknown>).status || "") : "";
-              if (status && status !== "streaming") {
-                noteActivity();
-              } else {
-                resetTimeout(IDLE_TIMEOUT_MS);
-              }
-            },
-            async (err) => {
-              if (settled) return;
-              console.warn("[jarvis] prompt.submit error, checking recovery:", err);
-              if (
-                String(err).includes("session not found") ||
-                (err && (err as any).code === 4001)
-              ) {
-                liveSessionIdRef.current = null;
-                try {
-                  const fresh = await ensureGatewaySession(persona);
-                  currentRuntimeSid = fresh.runtimeSid;
-                  const retryRes = (await gw.request("prompt.submit", {
-                    session_id: currentRuntimeSid,
-                    text,
-                    surface: "voice-live",
-                    voice_context: voiceContext,
-                  })) as unknown;
-                  if (!settled) {
-                    noteActivity();
-                  }
-                  void retryRes;
-                  return;
-                } catch (retryErr) {
-                  cleanup();
-                  reject(retryErr);
-                  return;
-                }
-              }
-              cleanup();
-              reject(err);
-            }
-          );
-        };
-
-        submitPrompt(currentRuntimeSid);
-      });
+        void refreshCallSessions();
+        return reply;
+      } finally {
+        if (activeTurnRef.current === controller) {
+          activeTurnRef.current = null;
+          setTurnActivity("");
+        }
+      }
     },
     [ensureGatewaySession, refreshCallSessions]
   );
@@ -827,6 +503,30 @@ return (
         </button>
       </div>
     </div>
+
+    <div className="flex items-center gap-3 px-4 py-2 text-sm text-cyan-300">
+      <button disabled={!!turnActivity} onClick={() => {
+        setSessionError("");
+        void ensureGatewaySession("jarvis").then(
+          session => {
+            setModelPickerGateway(gatewayRef.current);
+            setModelPickerSession(session.runtimeSid);
+          },
+          error => setSessionError(error instanceof Error ? error.message : String(error)),
+        );
+      }}>Call model</button>
+      {turnActivity && <span role="status">{turnActivity}</span>}
+      {sessionError && <span role="alert">{sessionError}</span>}
+    </div>
+    {modelPickerSession && modelPickerGateway && <ModelPickerDialog
+      gw={modelPickerGateway}
+      sessionId={modelPickerSession}
+      title="Choose Jarvis call model"
+      onClose={() => {
+        setModelPickerSession(null);
+        setModelPickerGateway(null);
+      }}
+    />}
 
     {/* Active Tab Viewport - Always mounted to keep continuous audio playback & voice call active */}
     <div className="flex-1 min-h-0 flex flex-col relative">

@@ -32,6 +32,7 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { ChatSessionList } from "@/components/ChatSessionList";
+import { ChatVoiceControls } from "@/components/ChatVoiceControls";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
@@ -97,6 +98,7 @@ import { PluginSlot } from "@/plugins";
 import { useTheme } from "@/themes";
 import { useProfileScope } from "@/contexts/useProfileScope";
 import { errorMessage } from "@/lib/api-error";
+import { sendVoicePrompt } from "@/lib/chat-voice";
 
 // Stable per-browser token identifying THIS chat tab's keep-alive PTY session.
 // Sent as ?attach=; lets a refresh/disconnect reattach to the same live process
@@ -553,6 +555,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     copyResetRef.current = setTimeout(() => setCopyState("idle"), 1500);
     termRef.current?.focus();
   };
+
+  const submitSpokenPrompt = useCallback((rawText: string): boolean => {
+    const ws = wsRef.current;
+    const sent = sendVoicePrompt(
+      ws,
+      rawText,
+      (callback) => window.setTimeout(callback, 100),
+      () => wsRef.current === ws,
+    );
+    if (!sent) return false;
+    termRef.current?.focus();
+    return true;
+  }, []);
 
   useEffect(() => {
     // Don't spawn the chat PTY (and the TUI/agent bootstrap it triggers)
@@ -1924,6 +1939,12 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             boxShadow: "0 8px 32px rgba(0, 0, 0, 0.4)",
           }}
         >
+          <ChatVoiceControls
+            channel={channel}
+            connected={ptyState === "open"}
+            foreground={terminalFg}
+            onSubmit={submitSpokenPrompt}
+          />
           <div
             ref={hostRef}
             className="hermes-chat-xterm-host min-h-0 min-w-0 flex-1"
