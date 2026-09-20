@@ -1920,10 +1920,11 @@ class GatewayTurnMixin:
         _streaming_tts_done = adapter is not None and bool(
             getattr(adapter, "_streaming_tts_turn_completed", lambda *_a, **_k: False)(session_key, run_generation)
         )
+        _voice_reply_sent = False
         if not _streaming_tts_done and self._should_send_voice_reply(
             event, response, agent_messages, already_sent=bool(agent_result.get("already_sent")),
         ):
-            await self._send_voice_reply(event, response)
+            _voice_reply_sent = bool(await self._send_voice_reply(event, response))
 
         # Streamed responses still need MEDIA: files delivered (chunks carry the tags verbatim). Never
         # skip when the agent failed: the error text is new content streaming didn't show.
@@ -1938,6 +1939,20 @@ class GatewayTurnMixin:
                     logger.debug("trailing footer send failed: %s", _e)
             # Return None so the body isn't sent twice; stash the delivered text on the event for the
             # /loop and /goal hooks that read the return value.
+            with suppress(Exception):
+                event._streamed_final_response = str(response or "")
+            return None
+
+        # When voice reply was successfully sent, suppress duplicate text if voice text is disabled
+        if _voice_reply_sent and hasattr(self, "_should_send_voice_text") and not self._should_send_voice_text(event):
+            logger.info("Voice reply delivered audio; suppressing duplicate text for session %s", session_entry.session_id)
+            if response and adapter:
+                await self._deliver_media_from_response(response, event, adapter)
+            if _footer_line and adapter:
+                try:
+                    await adapter.send(source.chat_id, _footer_line, metadata=self._event_thread_metadata(event, source))
+                except Exception as _e:
+                    logger.debug("trailing footer send failed: %s", _e)
             with suppress(Exception):
                 event._streamed_final_response = str(response or "")
             return None
@@ -2921,6 +2936,12 @@ class GatewayTurnMixin:
         progress_mode, _tool_progress_explicit = resolve_tool_progress(
             user_config, platform_key, os.getenv("HERMES_TOOL_PROGRESS_MODE"),
         )
+        clean_messaging = bool(
+            getattr(getattr(self, "config", None), "clean_messaging", False)
+            or (user_config.get("gateway") or {}).get("clean_messaging", False)
+        )
+        if clean_messaging and not _tool_progress_explicit:
+            progress_mode = "off"
         # "accumulate" (edit one bubble) or "separate" (one msg per tool)
         progress_grouping = resolve_display_setting(user_config, platform_key, "tool_progress_grouping") or "accumulate"
         _generic_status_recent: List[str] = []
