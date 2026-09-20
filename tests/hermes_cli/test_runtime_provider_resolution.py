@@ -671,6 +671,31 @@ def test_bare_custom_uses_loopback_model_base_url_when_provider_not_custom(monke
     assert resolved["api_key"] == "no-key-required"
 
 
+def test_codex_app_server_opt_in_routes_only_named_custom_providers(monkeypatch):
+    """#75186: ``model.openai_runtime: codex_app_server`` reaches a configured ``providers.<name>``
+    entry (codex selects it by id from its own config); anonymous ``custom`` has no stable id and
+    stays on chat_completions, as does the named entry without the opt-in."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config = {
+        "model": {"provider": "custom:my-gateway", "default": "gpt-5.4", "openai_runtime": "codex_app_server"},
+        "providers": {"my-gateway": {"api": "https://gateway.example.com/v1", "api_key": "test-key", "default_model": "gpt-5.4"}},
+    }
+    monkeypatch.setattr(rp, "load_config", lambda: config)
+
+    resolved = rp.resolve_runtime_provider(requested="custom:my-gateway")
+    assert (resolved["provider"], resolved["requested_provider"], resolved["api_mode"]) == (
+        "custom", "custom:my-gateway", "codex_app_server")
+    assert resolved["api_key"] == "test-key"  # Hermes' own aux/fallback client keeps the credential
+
+    anonymous = rp.resolve_runtime_provider(requested="custom", explicit_base_url="https://gateway.example.com/v1",
+                                            explicit_api_key="k")
+    assert anonymous["api_mode"] == "chat_completions"
+
+    config["model"].pop("openai_runtime")
+    assert rp.resolve_runtime_provider(requested="custom:my-gateway")["api_mode"] == "chat_completions"
+
+
 def test_named_custom_provider_uses_saved_credentials(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -2108,3 +2133,46 @@ def test_openai_runtime_unset_keeps_wire_api_mode(monkeypatch, rung, openai_runt
     monkeypatch.setattr(rp, "_get_model_config", lambda: model_cfg)
 
     assert rp.resolve_runtime_provider(requested="openai-codex", **kwargs)["api_mode"] == "codex_responses"
+
+
+def test_openai_runtime_codex_app_server_survives_the_openai_to_custom_alias_expansion(monkeypatch):
+    """``provider: openai`` expands to the anonymous ``custom`` runtime (#116055) before the overlay runs;
+    the overlay must judge the name the user configured, or the documented ``openai`` opt-in is a silent no-op."""
+    monkeypatch.setattr(rp, "load_pool", lambda _p: SimpleNamespace(has_credentials=lambda: False))
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {
+        "provider": "openai", "default": "gpt-5.5-codex", "openai_runtime": "codex_app_server"})
+
+    resolved = rp.resolve_runtime_provider(requested="openai", explicit_api_key="sk-explicit")
+
+    assert resolved["provider"] == "custom"  # the alias expansion itself is unchanged
+    assert resolved["api_mode"] == "codex_app_server"
+
+
+# ── #116055: ``provider: openai`` means the same thing on both auxiliary paths ──────────────────
+
+def test_openai_alias_resolves_identically_on_runtime_and_aux_client_paths(monkeypatch):
+    """background_review/curator/MoA (resolve_runtime_provider) and compression/vision/title
+    (_resolve_task_provider_model) must land on the same endpoint for the same aux block."""
+    from agent import auxiliary_client as aux
+    block = {"provider": "openai", "model": "review-model", "base_url": "https://gateway.example/v1", "api_key": "gw-key"}
+    monkeypatch.setattr(aux, "_get_auxiliary_task_config", lambda task: block if task == "background_review" else {})
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {"provider": "custom:mylocal", "default": "local-main"})
+
+    aux_provider, aux_model, aux_base, aux_key, _ = aux._resolve_task_provider_model("background_review")
+    runtime = rp.resolve_runtime_provider(requested=block["provider"], target_model=block["model"],
+                                          explicit_api_key=block["api_key"], explicit_base_url=block["base_url"])
+
+    assert (aux_provider, aux_base, aux_key) == ("custom", "https://gateway.example/v1", "gw-key")
+    assert (runtime["provider"], runtime["base_url"], runtime["api_key"]) == (aux_provider, aux_base, aux_key)
+
+
+def test_openai_alias_without_base_url_pairs_openai_key_with_openai_base_url(monkeypatch):
+    """No aux base_url: the alias lands on OPENAI_BASE_URL (the proxy the key was issued for) and the
+    runtime path pairs OPENAI_API_KEY with it instead of sending a placeholder key to the proxy."""
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://llm-proxy.corp.example/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proxy-issued")
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {"provider": "custom:mylocal", "default": "local-main"})
+
+    runtime = rp.resolve_runtime_provider(requested="openai", target_model="gpt-x")
+
+    assert (runtime["provider"], runtime["base_url"], runtime["api_key"]) == ("custom", "https://llm-proxy.corp.example/v1", "sk-proxy-issued")
