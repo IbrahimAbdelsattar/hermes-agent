@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -27,6 +28,50 @@ from gateway.platforms.api_server_run_idempotency import TERMINAL_STATUSES
 
 
 logger = logging.getLogger("gateway.platforms.api_server")
+
+# Executor-thread lifetime for API-server agent turns (#116535). The handler-side
+# ``_inflight_agent_runs`` count in api_server.py drops in the handler's ``finally`` when the
+# handler task is cancelled (disconnect/shutdown) while the executor thread behind
+# ``run_in_executor`` keeps running -- so the shutdown close gate cannot rely on it. This
+# module-level count is taken on the submitting thread before ``run_in_executor`` and released
+# in the worker thread's own ``finally``, which also keeps it visible past ``adapters.clear()``.
+_API_WORKER_LOCK = threading.Lock()
+_API_WORKER_LIVE = 0
+
+
+def api_worker_live_count() -> int:
+    """Executor threads still inside an API-server agent turn (``_run_agent`` and ``/v1/runs``)."""
+    with _API_WORKER_LOCK:
+        return _API_WORKER_LIVE
+
+
+def _submit_api_worker(loop, fn):
+    """``loop.run_in_executor(None, fn)`` with the worker-lifetime count held for the submission.
+
+    Increment on the submitting (handler) thread so the count is live before the worker can
+    exit; decrement in the worker thread's own ``finally`` so handler cancellation cannot drop
+    it early. When submission itself fails (default executor already shut down during quiesce
+    -> RuntimeError) the worker never runs, so the count is released here instead — a leaked
+    count would make the shutdown close gate skip the SessionDB close for the process lifetime.
+    """
+    global _API_WORKER_LIVE
+    with _API_WORKER_LOCK:
+        _API_WORKER_LIVE += 1
+
+    def _counted():
+        try:
+            return fn()
+        finally:
+            global _API_WORKER_LIVE
+            with _API_WORKER_LOCK:
+                _API_WORKER_LIVE -= 1
+
+    try:
+        return loop.run_in_executor(None, _counted)
+    except BaseException:
+        with _API_WORKER_LOCK:
+            _API_WORKER_LIVE -= 1
+        raise
 _ROOM_RETENTION_REQUEST_KEY = (
     RequestKey("hermes.room_run_retention_until", float) if RequestKey is not None
     else "hermes.room_run_retention_until")
@@ -867,8 +912,8 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
                 interim_assistant_callback=_interim_cb, **run.agent_kwargs)
         self._active_run_agents[run_id] = agent
         approval_notify = _make_approval_notify(self, run, _api_server=_api_server)
-        result, usage, served_runtime = await loop.run_in_executor(
-            None, lambda: _run_agent_sync(self, run, agent, approval_notify, _api_server=_api_server))
+        result, usage, served_runtime = await _submit_api_worker(
+            loop, lambda: _run_agent_sync(self, run, agent, approval_notify, _api_server=_api_server))
         if not isinstance(result, dict):
             result = {}
         status, fields = terminal_run_status(result)
