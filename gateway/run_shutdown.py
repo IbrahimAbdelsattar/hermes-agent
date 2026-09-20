@@ -232,6 +232,14 @@ class GatewayShutdownMixin:
             logger.debug("Failed interrupting api_server runs during shutdown: %s", exc)
             return 0
 
+    def _mark_api_runs_shutdown_requested(self) -> int:
+        """Persist the shutdown boundary on API runs before the drain can await."""
+        try:
+            return self._api_server_hook("mark_shutdown_requested")
+        except Exception as exc:
+            logger.debug("Failed marking api_server runs as shutdown-requested: %s", exc)
+            return 0
+
     def _active_deferred_agent_worker_count(self) -> int:
         """Executor workers that outlived their gateway turn (e.g. a timed-out hygiene compression)."""
         workers = getattr(self, "_deferred_agent_workers", None)
@@ -1440,9 +1448,23 @@ class GatewayShutdownMixin:
         )
 
     def _wedged_agent_count(self) -> int:
-        """Running chat agents with no activity for ``agent.gateway_timeout`` (0 when disabled).
+        """Work units the restart wait may skip: chat agents idle past ``agent.gateway_timeout`` and
+        cron runs older than the scheduler's stale-inflight allowance (#115469).
 
-        Cron/API work has no activity clock and pending sentinels are brand-new, so neither counts;
+        API work has no activity clock and pending sentinels are brand-new, so neither counts.
+        """
+        return self._wedged_chat_agent_count() + self._wedged_cron_job_count()
+
+    def _wedged_cron_job_count(self) -> int:
+        """Cron runs past ``cron.scheduler.get_wedged_job_ids``'s allowance; 0 if cron can't import."""
+        try:
+            from cron.scheduler import get_wedged_job_ids
+            return len(get_wedged_job_ids())
+        except Exception:
+            return 0
+
+    def _wedged_chat_agent_count(self) -> int:
+        """Running chat agents with no activity for ``agent.gateway_timeout`` (0 when disabled);
         an unreadable activity summary means "not wedged".
         """
         from gateway.run import _AGENT_PENDING_SENTINEL, _float_env
@@ -1499,10 +1521,12 @@ class GatewayShutdownMixin:
                         unit["idle_s"] = summary.get("seconds_since_activity")
             units.append(unit)
         with suppress(Exception):
-            from cron.scheduler import get_running_job_details
+            from cron.scheduler import get_running_job_details, get_wedged_job_ids
+            wedged = get_wedged_job_ids()
             for job in get_running_job_details():
                 units.append({"kind": "cron", "job_id": job["job_id"], "elapsed_s": job["elapsed_s"],
-                              "pid": job["worker_pid"] or os.getpid(), "external": bool(job["worker_pid"])})
+                              "pid": job["worker_pid"] or os.getpid(), "external": bool(job["worker_pid"]),
+                              "wedged": job["job_id"] in wedged})
         for kind, count in (("api", self._active_api_run_count()), ("deferred", self._active_deferred_agent_worker_count())):
             units.extend({"kind": kind, "pid": os.getpid()} for _ in range(count))
         return units
@@ -1576,6 +1600,9 @@ class GatewayShutdownMixin:
         self._restart_task_started = True
         # Refuse new turns; keep ``_running`` True so the active turn can still deliver its final response.
         self._draining = True
+        # The restart's after-turn wait is a drain window too: pollers of GET /v1/runs/{id} must see
+        # the boundary from the moment new turns are refused, not only once stop() begins (#115133).
+        self._mark_api_runs_shutdown_requested()
 
         async def _run_restart() -> None:
             await self._await_active_work_before_restart()
@@ -1714,6 +1741,7 @@ class GatewayShutdownMixin:
         self._running = False
         self._clear_plugin_message_injector()
         self._draining = True
+        self._mark_api_runs_shutdown_requested()
         # getattr-guards: shutdown-path test doubles may lack the room worker / systemd watchdog.
         stop_room_worker = getattr(self, "_stop_hosted_room_worker", None)
         if callable(stop_room_worker):
