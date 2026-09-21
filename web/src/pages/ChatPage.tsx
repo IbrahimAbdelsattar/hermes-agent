@@ -573,7 +573,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       allowProposedApi: true,
       cursorBlink: true,
       fontFamily:
-        "'JetBrains Mono', 'Cascadia Mono', 'Fira Code', 'MesloLGS NF', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace",
+        "'JetBrains Mono', 'Cascadia Mono', 'Fira Code', 'Cairo', 'IBM Plex Sans Arabic', 'Noto Sans Arabic', 'Segoe UI', 'Geeza Pro', 'Tahoma', 'MesloLGS NF', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace",
       fontSize: terminalFontSizeForWidth(tierW0),
       lineHeight: terminalLineHeightForWidth(tierW0),
       letterSpacing: 0,
