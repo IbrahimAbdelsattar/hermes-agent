@@ -64,12 +64,16 @@ export type PauseTolerance = 'relaxed' | 'balanced' | 'fast';
 export type AudioLatencyMode = 'instant' | 'studio';
 
 export interface CallMessage {
-
   id: string;
   sender: Speaker;
   text: string;
   persona?: VoicePersona;
   timestamp: string;
+  isJevFastPath?: boolean;
+  jevLatencyMs?: number;
+  jevConfidence?: number;
+  jevRoute?: string;
+  jevAction?: string;
 }
 
 export interface LiveVoiceCallWidgetProps {
@@ -2472,7 +2476,18 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
                         </>
                       )}
                     </span>
-                    <span>{msg.timestamp}</span>
+                    <div className="flex items-center gap-2">
+                      {msg.isJevFastPath && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-[9px] text-cyan-300 font-mono tracking-tight shadow-[0_0_8px_rgba(0,240,255,0.2)]">
+                          <Zap className="w-2.5 h-2.5 text-cyan-300" />
+                          <span>JEV FAST-PATH</span>
+                          {msg.jevRoute ? <span className="uppercase text-cyan-200 font-semibold">• {msg.jevRoute}</span> : null}
+                          {msg.jevLatencyMs ? <span className="text-cyan-400">• {Math.round(msg.jevLatencyMs)}ms</span> : null}
+                          {msg.jevConfidence ? <span className="text-cyan-400">• {Math.round(msg.jevConfidence * 100)}%</span> : null}
+                        </span>
+                      )}
+                      <span>{msg.timestamp}</span>
+                    </div>
                   </div>
                   <p className="text-xs leading-relaxed font-sans font-normal whitespace-pre-wrap">{msg.text}</p>
                 </div>

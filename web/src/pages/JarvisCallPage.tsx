@@ -11,6 +11,16 @@ import { GatewayClient } from "@/lib/gatewayClient";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { api, type SessionInfo } from "@/lib/api";
 import { submitJarvisTurn } from "@/lib/jarvis-turn";
+import {
+  evaluateJevIntent,
+  getJarvisJevStatus,
+  isJevFastPathEnabled,
+  setJevFastPathEnabled,
+  executeFastPathMusic,
+  executeFastPathTelemetry,
+  executeFastPathStandby,
+  type JevStatusResponse,
+} from "@/utils/jarvisJevClient";
 
 export type JarvisTab = "call" | "core" | "music" | "feed";
 
@@ -97,6 +107,23 @@ export default function JarvisCallPage() {
     isPlaying: boolean;
     currentTrack?: { title?: string; artist?: string } | null;
   } | null>(null);
+
+  const [jevEnabled, setJevEnabled] = useState<boolean>(() => isJevFastPathEnabled());
+  const [jevStatus, setJevStatus] = useState<JevStatusResponse | null>(null);
+
+  useEffect(() => {
+    void getJarvisJevStatus().then(st => {
+      setJevStatus(st);
+    });
+  }, []);
+
+  const toggleJevFastPath = useCallback(() => {
+    setJevEnabled(prev => {
+      const next = !prev;
+      setJevFastPathEnabled(next);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const handleMusicState = (e: Event) => {
@@ -382,6 +409,37 @@ export default function JarvisCallPage() {
       _language: CallLanguage = "Arabic",
       onDelta?: (partial: string) => void,
     ): Promise<string> => {
+      const isArabic = _language === "Arabic" || /[\u0600-\u06FF]/.test(text);
+
+      // ── TypeSafe Jev Fast-Path Triage ──────────────────────────────
+      let jevContextHint = "";
+      if (jevEnabled) {
+        try {
+          const decision = await evaluateJevIntent(
+            text,
+            isArabic ? "arabic_egyptian" : "english",
+            persona,
+          );
+
+          if (decision.bypass_llm && decision.confidence >= 0.85) {
+            if (decision.route === "music" && decision.action) {
+              executeFastPathMusic(decision.action, decision.target);
+              return decision.spoken_confirmation;
+            }
+            if (decision.route === "telemetry" && decision.action) {
+              return await executeFastPathTelemetry(decision.action, isArabic);
+            }
+            if (decision.route === "standby") {
+              executeFastPathStandby();
+              return decision.spoken_confirmation;
+            }
+          }
+          jevContextHint = ` [Jev classification: ${decision.route} (${Math.round(decision.confidence * 100)}%)]`;
+        } catch (err) {
+          console.debug("Jev fast-path bypassed, continuing to Hermes LLM:", err);
+        }
+      }
+
       if (activeTurnRef.current) throw new Error("Jarvis is still handling the previous request.");
       const gw = gatewayRef.current;
       if (!gw) throw new Error("Gateway client not initialized");
@@ -394,7 +452,7 @@ export default function JarvisCallPage() {
           sessionId: session.runtimeSid,
           storedSessionId: session.storedSid,
           text,
-          voiceContext: `${persona === "gwen" ? "Gwen" : "Jarvis"} voice, ${_language}. Short spoken sentences; report only verified results.`,
+          voiceContext: `${persona === "gwen" ? "Gwen" : "Jarvis"} voice, ${_language}. Short spoken sentences; report only verified results.${jevContextHint}`,
           signal: controller.signal,
           onDelta,
           onActivity: setTurnActivity,
@@ -418,7 +476,7 @@ export default function JarvisCallPage() {
         }
       }
     },
-    [ensureGatewaySession, refreshCallSessions]
+    [ensureGatewaySession, refreshCallSessions, jevEnabled]
   );
 
 return (
@@ -504,19 +562,50 @@ return (
       </div>
     </div>
 
-    <div className="flex items-center gap-3 px-4 py-2 text-sm text-cyan-300">
-      <button disabled={!!turnActivity} onClick={() => {
-        setSessionError("");
-        void ensureGatewaySession("jarvis").then(
-          session => {
-            setModelPickerGateway(gatewayRef.current);
-            setModelPickerSession(session.runtimeSid);
-          },
-          error => setSessionError(error instanceof Error ? error.message : String(error)),
-        );
-      }}>Call model</button>
-      {turnActivity && <span role="status">{turnActivity}</span>}
-      {sessionError && <span role="alert">{sessionError}</span>}
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 text-sm text-cyan-300 bg-[#020b14]/70 border border-[#00f0ff]/20 rounded-xl">
+      <div className="flex items-center gap-3">
+        <button
+          className="px-2.5 py-1 rounded-lg bg-cyan-950/60 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-900/60 transition-colors font-mono text-xs"
+          disabled={!!turnActivity}
+          onClick={() => {
+            setSessionError("");
+            void ensureGatewaySession("jarvis").then(
+              session => {
+                setModelPickerGateway(gatewayRef.current);
+                setModelPickerSession(session.runtimeSid);
+              },
+              error => setSessionError(error instanceof Error ? error.message : String(error)),
+            );
+          }}
+        >
+          Call model
+        </button>
+        {turnActivity && <span role="status" className="text-xs text-amber-300 font-mono animate-pulse">{turnActivity}</span>}
+        {sessionError && <span role="alert" className="text-xs text-red-400 font-mono">{sessionError}</span>}
+      </div>
+
+      {/* TypeSafe Jev Fast-Path Control */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggleJevFastPath}
+          title="Toggle TypeSafe Jev System One fast-path intent router"
+          className={cn(
+            "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono transition-all border",
+            jevEnabled
+              ? "bg-cyan-500/15 border-cyan-400/50 text-cyan-300 shadow-[0_0_10px_rgba(0,240,255,0.2)] hover:bg-cyan-500/25"
+              : "bg-slate-900 border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-600",
+          )}
+        >
+          <Zap className={cn("size-3.5", jevEnabled ? "text-cyan-400 animate-pulse" : "text-slate-500")} />
+          <span>JEV FAST-PATH: {jevEnabled ? "ACTIVE" : "OFF"}</span>
+          {jevEnabled && jevStatus && (
+            <span className="text-[10px] uppercase font-bold text-cyan-200 border-l border-cyan-400/30 pl-1.5">
+              {jevStatus.provider === "typesafe" ? "TypeSafe AI" : jevStatus.provider === "openrouter" ? "OpenRouter" : "Heuristic"}
+            </span>
+          )}
+        </button>
+      </div>
     </div>
     {modelPickerSession && modelPickerGateway && <ModelPickerDialog
       gw={modelPickerGateway}
