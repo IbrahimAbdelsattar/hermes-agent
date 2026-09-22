@@ -97,6 +97,7 @@ const WebhooksPage = lazy(() => import("@/pages/WebhooksPage"));
 const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
 const JarvisCallPage = lazy(() => import("@/pages/JarvisCallPage"));
+const PublicApisPage = lazy(() => import("@/pages/PublicApisPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -180,6 +181,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/jarvis-core": JarvisCallPage,
   "/jarvis-music": JarvisCallPage,
   "/jarvis-feed": JarvisCallPage,
+  "/public-apis": PublicApisPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
@@ -201,6 +203,11 @@ const BUILTIN_NAV_REST: NavItem[] = [
     path: "/jarvis",
     label: "Jarvis AI",
     icon: Sparkles,
+  },
+  {
+    path: "/public-apis",
+    label: "Public APIs",
+    icon: Globe,
   },
   { path: "/files", label: "Files", icon: FolderOpen },
   {
@@ -626,7 +633,7 @@ export default function App() {
                 <PluginSlot name="header-left" />
 
                 <Typography className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem] text-midground uppercase">
-                  Hermes
+                  Jarvis
                   <br />
                   Agent
                 </Typography>

@@ -33,14 +33,14 @@ export function submitJarvisTurn(gateway: GatewayClient, options: JarvisTurnOpti
     const activity = () => {
       clearTimeout(timeout);
       timeout = setTimeout(() => fail(new Error(
-        'No response from Hermes for two minutes. The task may still be running; check its session before retrying.',
+        'No response from Jarvis for two minutes. The task may still be running; check its session before retrying.',
       )), 120_000);
     };
     if (options.signal.aborted) { abort(); return; }
     options.signal.addEventListener('abort', abort, { once: true });
     unsubscribe.push(gateway.onState(state => {
       if (state === 'closed' || state === 'error') {
-        fail(new Error('Connection to Hermes lost. Reconnect and check the session before retrying.'));
+        fail(new Error('Connection to Jarvis lost. Reconnect and check the session before retrying.'));
       }
     }));
     unsubscribe.push(gateway.onAny(event => {
@@ -54,27 +54,27 @@ export function submitJarvisTurn(gateway: GatewayClient, options: JarvisTurnOpti
       options.onDelta?.(text);
     }));
     unsubscribe.push(gateway.on('tool.start', event => {
-      if (matches(event.session_id)) options.onActivity?.('Hermes is running a tool');
+      if (matches(event.session_id)) options.onActivity?.('Jarvis is running a tool');
     }));
     unsubscribe.push(gateway.on('message.complete', event => {
       if (!matches(event.session_id)) return;
       const result = event.payload;
       if (result?.status === 'error' || result?.status === 'interrupted') {
         fail(new Error(result.error || (typeof result.text === 'string' && result.text) ||
-          (result.status === 'interrupted' ? 'Task interrupted.' : 'Hermes could not complete the task.')));
+          (result.status === 'interrupted' ? 'Task interrupted.' : 'Jarvis could not complete the task.')));
         return;
       }
       // Streamed commentary may precede tool calls; the terminal text is authoritative.
       const final = typeof result?.text === 'string' ? result.text.trim() : text.trim();
-      if (!final) { fail(new Error('Hermes returned no spoken response. Check the session for task results.')); return; }
+      if (!final) { fail(new Error('Jarvis returned no spoken response. Check the session for task results.')); return; }
       cleanup();
       resolve(final);
     }));
     unsubscribe.push(gateway.on('error', event => {
-      if (matches(event.session_id)) fail(new Error(event.payload?.message || 'Hermes request failed.'));
+      if (matches(event.session_id)) fail(new Error(event.payload?.message || 'Jarvis request failed.'));
     }));
     activity();
-    options.onActivity?.('Waiting for Hermes');
+    options.onActivity?.('Waiting for Jarvis');
     void gateway.request<{ status: string }>('prompt.submit', {
       session_id: options.sessionId,
       text: options.text,
@@ -82,7 +82,7 @@ export function submitJarvisTurn(gateway: GatewayClient, options: JarvisTurnOpti
       voice_context: options.voiceContext,
     }).then(result => {
       if (settled) return;
-      if (result.status !== 'streaming') options.onActivity?.('Waiting for the current Hermes task');
+      if (result.status !== 'streaming') options.onActivity?.('Waiting for the current Jarvis task');
       activity();
     }, fail);
   });

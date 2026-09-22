@@ -75,7 +75,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       id: 'm-1',
       sender: 'jarvis',
       content:
-        'مرحباً بك يا باشمهندس إبراهيم! أنا J.A.R.V.I.S. (Chief of Staff & AI Systems Architect). تم فحص ومزامنة كامل ملفك الهندسي: 41 مشروع على GitHub (بما فيها hermes-agent و MR-NLP-Robust-RAG-Chatbot و dual-site-clerk-auth)، بالإضافة إلى ربط خدمات Google Cloud (BigQuery, Cloud Run, GCS, Dataproc) ومهام Hermes Agent المستقلة. جميع الأنظمة تحت السيطرة وفي أعلى مستويات الأداء. كيف يمكنني دعمك في كتابة الكود أو التحليل السحابي اليوم؟',
+        'مرحباً بك يا باشمهندس إبراهيم! أنا J.A.R.V.I.S. (Chief of Staff & AI Systems Architect). تم فحص ومزامنة كامل ملفك الهندسي: 41 مشروع على GitHub (بما فيها hermes-agent و MR-NLP-Robust-RAG-Chatbot و dual-site-clerk-auth)، بالإضافة إلى ربط خدمات Google Cloud (BigQuery, Cloud Run, GCS, Dataproc) ومهام Jarvis Agent المستقلة. جميع الأنظمة تحت السيطرة وفي أعلى مستويات الأداء. كيف يمكنني دعمك في كتابة الكود أو التحليل السحابي اليوم؟',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       technicalKeywords: [
         'Eng. Ibrahim Abdelsattar',
@@ -111,7 +111,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
 
   // Daily Focus Goal Tracker State
   const [dailyFocusGoal, setDailyFocusGoal] = useState<string>(
-    'Deploy MR-NLP RAG & Hermes Agent to Google Cloud Run with BigQuery Vector Index'
+    'Deploy MR-NLP RAG & Jarvis Agent to Google Cloud Run with BigQuery Vector Index'
   );
   const focusTargetMinutes = 60;
   const [focusElapsedSeconds, setFocusElapsedSeconds] = useState<number>(2100);
@@ -392,7 +392,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
       const errorReply: JarvisMessage = {
         id: `j-${Date.now()}`,
         sender: 'jarvis',
-        content: `يا باشمهندس، حدث خطأ أثناء الاتصال بالخادم: ${message}. يرجى التحقق من اتصال بوابة Hermes.`,
+        content: `يا باشمهندس، حدث خطأ أثناء الاتصال بالخادم: ${message}. يرجى التحقق من اتصال بوابة Jarvis.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorReply]);
@@ -682,12 +682,12 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
         <button
           onClick={() =>
             handleSendMessage(
-              'Review Hermes Agent turn loop prompt-caching stability, tools registry discovery, and JSON-RPC gateway performance.'
+              'Review Jarvis Agent turn loop prompt-caching stability, tools registry discovery, and JSON-RPC gateway performance.'
             )
           }
           className="px-2.5 py-1 bg-[#07172b] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#c8c6c5] hover:text-[#00f0ff] rounded whitespace-nowrap transition-colors"
         >
-          ⚡ Hermes Core Caching
+          ⚡ Jarvis Core Caching
         </button>
         <button
           onClick={() =>
@@ -1035,7 +1035,7 @@ export const JarvisCoreWidget: React.FC<JarvisCoreWidgetProps> = ({
             type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Command J.A.R.V.I.S. regarding Ibrahim's GitHub repos, Hermes Agent tasks, Google Cloud..."
+            placeholder="Command J.A.R.V.I.S. regarding Ibrahim's GitHub repos, Jarvis Agent tasks, Google Cloud..."
             className="flex-1 bg-[#040e1b] border border-[#00f0ff]/30 focus:border-[#00f0ff] text-xs text-[#00f0ff] px-3.5 py-2.5 rounded-lg outline-none placeholder-[#80f7ff]/40 font-mono transition-all shadow-[inset_0_0_8px_rgba(0,240,255,0.05)]"
           />
           <button

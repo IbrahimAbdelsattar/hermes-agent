@@ -135,7 +135,7 @@ export async function fetchLiveNews(): Promise<LiveNewsItem[]> {
 
   return [
     {
-      title: 'Hermes Agent & Autonomous Architectures',
+      title: 'Jarvis Agent & Autonomous Architectures',
       extract: 'Next-generation AI agents provide real-time voice sentinel and tool executing interfaces.',
       url: 'https://github.com/NousResearch/hermes-agent',
       type: 'featured',

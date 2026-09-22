@@ -77,7 +77,7 @@ it('keeps tool work alive but never turns timeout, disconnect, or cancellation i
   await vi.advanceTimersByTimeAsync(10_000);
   await timedOut;
   const disconnected = submit();
-  const lost = expect(disconnected).rejects.toThrow('Connection to Hermes lost');
+  const lost = expect(disconnected).rejects.toThrow('Connection to Jarvis lost');
   socket.close();
   await lost;
 });

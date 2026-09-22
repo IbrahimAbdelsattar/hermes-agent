@@ -1448,7 +1448,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
       if (errType === 'not-allowed' || errType === 'service-not-allowed') {
         setRecognitionStatus('Microphone permission denied — typed input active');
       } else if (errType === 'network') {
-        setRecognitionStatus('Web Speech API network offline — Hermes Whisper STT standby');
+        setRecognitionStatus('Web Speech API network offline — Jarvis Whisper STT standby');
         setIsWhisperFallback(true);
         isWhisperFallbackRef.current = true;
       } else if (errType !== 'aborted' && errType !== 'no-speech') {
@@ -1692,8 +1692,8 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
         appendMessage(
           'assistant',
           selectedPersona === 'gwen'
-            ? 'أهلاً بك يا باشا! أنا جوين، الخط المباشر شغال مع جارفيس وهيرميس إيجينت.'
-            : 'Jarvis online. Live voice call session initialized with Hermes Agent.',
+            ? 'أهلاً بك يا باشا! أنا جوين، الخط المباشر شغال مع جارفيس إيجينت.'
+            : 'Jarvis online. Live voice call session initialized with Jarvis Agent.',
           selectedPersona
         );
         window.setTimeout(startRecognition, 200);
@@ -1844,7 +1844,7 @@ export const LiveVoiceCallWidget: React.FC<LiveVoiceCallWidgetProps> = ({
               <Sparkles className="w-4 h-4 text-[#ffb700]" /> JARVIS LIVE VOICE SENTINEL
             </h2>
             <p className="text-[11px] font-mono text-[#80f7ff]/70">
-              Hermes Agent • Status:{' '}
+              Jarvis Agent • Status:{' '}
               {status === 'active' && isAmbientStandby ? (
                 <span className="text-amber-400 uppercase font-bold">STANDBY (24/7 AMBIENT LISTENING)</span>
               ) : (

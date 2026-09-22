@@ -271,6 +271,11 @@ CODEX_ACCOUNT_MODEL_ENTITLEMENT_MARKER = "model is not supported when using code
 _MODEL_NOT_FOUND_PATTERNS = (
     "is not a valid model", "invalid model", "model not found", "model_not_found", "does not exist",
     "no such model", "unknown model", "unsupported model", "no endpoints found that support tool use",
+    # Custom gateways / proxies report a dead or unserved model as a 400
+    # "Upstream request failed: Model is unavailable." — without these the
+    # generic 400 path misreads it as format_error ("malformed request, /new").
+    "model is unavailable", "model is currently unavailable", "model currently unavailable",
+    "model not available", "model_not_available", "model unavailable",
 )
 
 # Qwen/vLLM chat-template "No user query found". Shared by the invalid-body

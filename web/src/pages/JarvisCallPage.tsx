@@ -445,7 +445,7 @@ export default function JarvisCallPage() {
       if (!gw) throw new Error("Gateway client not initialized");
       const controller = new AbortController();
       activeTurnRef.current = controller;
-      setTurnActivity("Connecting to Hermes");
+      setTurnActivity("Connecting to Jarvis");
       try {
         let session = await ensureGatewaySession(persona);
         const submit = () => submitJarvisTurn(gw, {
@@ -499,7 +499,7 @@ return (
           </span>
         </div>
         <p className="text-xs text-[#80f7ff]/70 mt-1 max-w-2xl font-mono">
-          Live Voice Sentinel, Chief of Staff AI Assistant, Holographic Audio Deck & Real-time Global Feeds integrated directly into Hermes Agent.
+          Live Voice Sentinel, Chief of Staff AI Assistant, Holographic Audio Deck & Real-time Global Feeds integrated directly into Jarvis Agent.
         </p>
       </div>
 
