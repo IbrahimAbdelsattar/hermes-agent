@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Set, Optional, Tuple
 # (tui_gateway/server.py::_load_enabled_toolsets). HA, kanban and computer_use
 # entries are further gated by their tools' check_fns.
 _HERMES_CORE_TOOLS = [
-    "web_search", "web_extract", "public_apis_search",
+    "web_search", "web_extract", "public_apis_search", "daily_briefing",
     "terminal", "process_manage",
     "read_file", "write_file", "patch", "search_files",
     "vision_analyze", "image_generate",
@@ -71,8 +71,9 @@ _CODING_TOOLS = _core_without("image_generate", "text_to_speech", "cronjob_manag
 # Core toolset definitions: individual tools or references to other toolsets.
 TOOLSETS = {
     # Basic toolsets - individual tool categories
-    "web": _ts("Web research and content extraction tools", ["web_search", "web_extract", "public_apis_search"]),
-    "public_apis": _ts("Search and discover over 1,890+ free public APIs from the curated public-apis catalog", ["public_apis_search"]),
+    "web": _ts("Web research and content extraction tools", ["web_search", "web_extract", "public_apis_search", "daily_briefing"]),
+    "public_apis": _ts("Search and discover over 1,890+ free public APIs from the curated public-apis catalog", ["public_apis_search", "daily_briefing"]),
+    "daily_briefing": _ts("Live daily intelligence briefing: currency exchange rates, live weather, and news feeds", ["daily_briefing"]),
     "search": _ts("Web search only (no content extraction/scraping)", ["web_search"]),
     "x_search": _ts(
         "Search X (Twitter) posts and threads via xAI's built-in x_search Responses "

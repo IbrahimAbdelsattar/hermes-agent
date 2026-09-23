@@ -399,6 +399,13 @@ describe("ChatVoiceControls", () => {
 
   it("falls back to the browser voice when OpenRouter playback fails instead of dropping the sentence", async () => {
     ttsMocks.speakViaOpenRouter.mockResolvedValue({ spoke: false, fallbackToFish: false });
+    let releaseSpeak!: () => void;
+    speechMocks.speak.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          releaseSpeak = () => resolve(undefined);
+        }),
+    );
     await act(async () => {
       root.render(
         <ChatVoiceControls
@@ -422,6 +429,14 @@ describe("ChatVoiceControls", () => {
     // The failed OpenRouter sentence must still be spoken by the fallback.
     expect(speechMocks.speak).toHaveBeenCalledWith("Task complete.", "jarvis", false);
     expect(container.textContent).toContain("OpenRouter TTS unavailable");
+
+    await act(async () => {
+      releaseSpeak();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    // The transient fallback note must not outlive the drained queue.
+    expect(container.textContent).toContain("Voice ready");
+    expect(container.textContent).not.toContain("OpenRouter TTS unavailable");
   });
 
   it("captures server-STT audio from recognition start and restarts cleanly each turn", async () => {
@@ -561,5 +576,54 @@ describe("ChatVoiceControls", () => {
     expect(container.textContent).toContain("Spoken replies off");
     expect(container.textContent).not.toContain("Hermes speaking");
     expect(container.textContent).not.toContain("OpenRouter TTS unavailable");
+  });
+
+  it("returns the status to a ready state after the speech queue drains with the mic off", async () => {
+    let releaseSpeak!: () => void;
+    speechMocks.speak.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          releaseSpeak = () => resolve(undefined);
+        }),
+    );
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={() => true}
+        />,
+      );
+    });
+    // Explicit Voice on, but the Mic stays OFF the whole time — the exact
+    // configuration where maybeResumeListening is a no-op and the pump's
+    // own status used to stick after the audio finished.
+    await act(async () => button("Voice off").click());
+    const feed = feedMocks.FakeEventsFeed.instances.at(-1)!;
+
+    await act(async () => {
+      feed.emit("message.start");
+      feed.emit("message.delta", { text: "All systems nominal." });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Hermes speaking");
+
+    // message.complete flushes the remainder while the sentence is still
+    // playing; the pump must only unwind once the queue is actually empty.
+    await act(async () => {
+      feed.emit("message.complete", { text: "All systems nominal." });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Hermes speaking");
+
+    await act(async () => {
+      releaseSpeak();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(speechMocks.speak).toHaveBeenCalledWith("All systems nominal.", "jarvis", false);
+    // The stale speaking status must not outlive the drained queue.
+    expect(container.textContent).toContain("Voice ready");
+    expect(container.textContent).not.toContain("Hermes speaking");
   });
 });

@@ -307,3 +307,4 @@ native/fts5_cjk/*.so
 # Regenerable static index; never an artifact of the repo.
 .graphify/
 scratch/
+.delegate-briefs/
