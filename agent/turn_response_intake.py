@@ -135,6 +135,29 @@ def normalize_model_response(
     if assistant_message.content is not None and not isinstance(assistant_message.content, str):
         assistant_message.content = _coerce_content_text(assistant_message.content)
 
+    if assistant_message.content and isinstance(assistant_message.content, str):
+        from agent.dsml_parser import is_dsml_or_tool_call_text, extract_dsml_and_text_tool_calls, strip_dsml_tags
+        if is_dsml_or_tool_call_text(assistant_message.content):
+            if not getattr(assistant_message, "tool_calls", None):
+                parsed_calls, cleaned_content = extract_dsml_and_text_tool_calls(assistant_message.content)
+                if parsed_calls:
+                    from agent.transports.types import ToolCall
+                    assistant_message.tool_calls = [
+                        ToolCall(
+                            id=tc["id"],
+                            name=tc["function"]["name"],
+                            arguments=tc["function"]["arguments"],
+                        )
+                        for tc in parsed_calls
+                    ]
+                    assistant_message.content = cleaned_content.strip() or None
+                    finish_reason = "tool_calls"
+                    assistant_message.finish_reason = "tool_calls"
+                else:
+                    assistant_message.content = strip_dsml_tags(assistant_message.content).strip() or None
+            else:
+                assistant_message.content = strip_dsml_tags(assistant_message.content).strip() or None
+
     # Agent-as-provider projection: splice the provider-agent's own tool work in as
     # call/result rows before this turn's assistant message; no-op for ordinary providers.
     splice_provider_projection(agent, response, messages)

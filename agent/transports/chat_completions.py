@@ -591,9 +591,29 @@ class ChatCompletionsTransport(ProviderTransport):
         # uppercase STOP / MAX_TOKENS — fold to the OpenAI contract here.
         finish_reason = _normalize_finish_reason(str(_fr) if isinstance(_fr, int) else _fr) or "stop"
 
+        content = getattr(msg, "content", None)
         tool_calls = None
         if getattr(msg, "tool_calls", None):
             tool_calls = [tc for tc in (self._normalize_tool_call(tc) for tc in msg.tool_calls) if tc is not None]
+
+        # DSML / text-embedded tool call extraction (DeepSeek, Eva-AI, etc.)
+        if not tool_calls and isinstance(content, str) and content:
+            from agent.dsml_parser import is_dsml_or_tool_call_text, extract_dsml_and_text_tool_calls
+            if is_dsml_or_tool_call_text(content):
+                parsed_calls, cleaned_content = extract_dsml_and_text_tool_calls(content)
+                if parsed_calls:
+                    tool_calls = [
+                        ToolCall(
+                            id=tc["id"],
+                            name=tc["function"]["name"],
+                            arguments=tc["function"]["arguments"],
+                        )
+                        for tc in parsed_calls
+                    ]
+                    content = cleaned_content or None
+                    finish_reason = "tool_calls"
+                elif cleaned_content != content:
+                    content = cleaned_content or None
 
         usage = Usage.from_openai(response.usage) if hasattr(response, "usage") and response.usage else None
 
@@ -607,7 +627,6 @@ class ChatCompletionsTransport(ProviderTransport):
 
         # OpenAI structured refusal (``message.refusal`` set, ``content`` empty); without
         # promotion the loop retries a deterministic refusal as an empty response.
-        content = getattr(msg, "content", None)
         refusal = _attr_or_model_extra(msg, "refusal")
         if isinstance(refusal, str) and refusal.strip():
             provider_data["refusal"] = refusal

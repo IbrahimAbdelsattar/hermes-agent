@@ -3092,17 +3092,39 @@ class _StreamingCall(StreamingWaitMonitor):
                 content_parts.append(delta_content)
                 if tool_calls_acc:
                     self._route_suppressed_text(delta_content)
-                elif (pending_text_parts or _provider_stream_text_may_be_sse(delta_content)
-                        # A shim cannot follow text already released to the display, so the
-                        # whole-content re-join runs only until the first emitted delta.
-                        or (not self.deltas_were_sent["yes"] and router_timeout_shim_may_follow("".join(content_parts)))):
-                    pending_text_parts.append(delta_content)
-                    pending = "".join(pending_text_parts)
-                    if not (_provider_stream_text_may_be_sse(pending) or router_timeout_shim_may_follow(pending)):
-                        _flush_pending_stream_text()
-                    continue
                 else:
-                    self._emit_text(delta_content)
+                    from agent.dsml_parser import stream_text_may_be_dsml, is_dsml_or_tool_call_text
+                    dsml_in_delta = (
+                        stream_text_may_be_dsml(delta_content)
+                        or is_dsml_or_tool_call_text(delta_content)
+                        or (not self.deltas_were_sent["yes"] and stream_text_may_be_dsml("".join(content_parts)))
+                        or (("\uff5c" in delta_content or "<" in delta_content) and stream_text_may_be_dsml("".join(content_parts[-5:])))
+                    )
+                    if dsml_in_delta and not pending_text_parts:
+                        # If there is clean text before the first DSML marker, emit it first
+                        first_tag_pos = -1
+                        for marker in ("<｜", "<|", "<tool_call", "</tool_call", "</｜", "</|", "<"):
+                            pos = delta_content.find(marker)
+                            if pos != -1 and (first_tag_pos == -1 or pos < first_tag_pos):
+                                first_tag_pos = pos
+                        if first_tag_pos > 0:
+                            pre_text = delta_content[:first_tag_pos]
+                            self._emit_text(pre_text)
+                            delta_content = delta_content[first_tag_pos:]
+
+                    if (pending_text_parts or _provider_stream_text_may_be_sse(delta_content)
+                            or dsml_in_delta
+                            or (not self.deltas_were_sent["yes"] and router_timeout_shim_may_follow("".join(content_parts)))):
+                        pending_text_parts.append(delta_content)
+                        pending = "".join(pending_text_parts)
+                        if not (_provider_stream_text_may_be_sse(pending)
+                                or router_timeout_shim_may_follow(pending)
+                                or stream_text_may_be_dsml(pending)
+                                or is_dsml_or_tool_call_text(pending)):
+                            _flush_pending_stream_text()
+                        continue
+                    else:
+                        self._emit_text(delta_content)
 
             delta_tool_calls = getattr(delta, "tool_calls", None)
             if delta_tool_calls:
@@ -3207,6 +3229,27 @@ class _StreamingCall(StreamingWaitMonitor):
                 "Stream ended with no finish_reason after delivering text with no tool calls; treating as a mid-stream drop.")
             return _build_partial_stream_stub(role, full_content, full_reasoning, model_name, usage_obj)
         effective_finish_reason = "length" if has_truncated_tool_args else (finish_reason or "stop")
+        if full_content and not mock_tool_calls:
+            from agent.dsml_parser import is_dsml_or_tool_call_text, extract_dsml_and_text_tool_calls
+            if is_dsml_or_tool_call_text(full_content):
+                dsml_calls, cleaned_full_content = extract_dsml_and_text_tool_calls(full_content)
+                if dsml_calls:
+                    for call in dsml_calls:
+                        mock_tool_calls.append(
+                            SimpleNamespace(
+                                id=call.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                                type="function",
+                                function=SimpleNamespace(
+                                    name=call["function"]["name"],
+                                    arguments=call["function"]["arguments"],
+                                ),
+                            )
+                        )
+                    full_content = cleaned_full_content or None
+                    effective_finish_reason = "tool_calls"
+                    flush_pending = lambda: None
+                elif cleaned_full_content != full_content:
+                    full_content = cleaned_full_content or None
         provider_stream_error = _provider_stream_error_from_text(
             full_content or "", effective_finish_reason, response=getattr(stream, "response", None))
         if provider_stream_error is not None:
