@@ -21,6 +21,7 @@ export * from './gateway-contract.generated.js'
  * publishes them into the same handler stream to report transport state.
  */
 export interface ClientLocalGatewayEventMap {
+  'browser.open_tab'?: { url?: string; label?: string }
   'dashboard.new_session_requested': { reason?: string }
   'gateway.protocol_error': { preview?: string }
   'gateway.reconnecting': { attempt?: number; delay_ms?: number }

@@ -20,6 +20,7 @@ _HERMES_CORE_TOOLS = [
     "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
     "browser_vault_list", "browser_vault_unlock", "browser_vault_fill", "browser_vault_save_login", "browser_vault_enter_code",  # ride with the browser
     "browser_exec",  # replaces the other browser tools when browser.backend is "browser-use"
+    "open_browser_tab",
     "text_to_speech",
     "todo_list", "memory",
     "session_search",
@@ -111,8 +112,8 @@ TOOLSETS = {
     # end-of-pipeline subtraction (#17309, #64503).
     "browser": _ts(
         "Browser automation for web interaction (navigate, click, type, scroll, "
-        "iframes, hold-click)",
-        [t for t in _HERMES_CORE_TOOLS if t.startswith("browser_")],
+        "iframes, hold-click, open tabs)",
+        [t for t in _HERMES_CORE_TOOLS if t.startswith("browser_") or t == "open_browser_tab"],
     ),
     "cronjob": _ts(
         "Cronjob management tool - create, list, update, pause, resume, remove, and "

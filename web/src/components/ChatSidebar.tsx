@@ -335,6 +335,20 @@ export function ChatSidebar({
     const offNewSession = feed.on('dashboard.new_session_requested', () => {
       onDashboardNewSessionRequest?.()
     })
+    const offBrowserOpen = feed.on('browser.open_tab', ev => {
+      const payload = ev?.payload as { url?: string } | undefined
+      const url = payload?.url
+      if (url && typeof window !== 'undefined' && typeof window.open === 'function') {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      }
+    })
+    const offPreviewOpen = feed.on('preview.open', ev => {
+      const payload = ev?.payload as { url?: string } | undefined
+      const url = payload?.url
+      if (url && typeof window !== 'undefined' && typeof window.open === 'function') {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      }
+    })
 
     void connect()
 
@@ -348,6 +362,8 @@ export function ChatSidebar({
       offState()
       offSessionInfo()
       offNewSession()
+      offBrowserOpen()
+      offPreviewOpen()
       feed.close()
     }
   }, [channel, feed, onDashboardNewSessionRequest, onSessionTitleChange, version])
