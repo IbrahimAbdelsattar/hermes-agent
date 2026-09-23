@@ -1,5 +1,25 @@
 export type VoiceLanguageMode = "en" | "ar" | "auto";
 
+/** Recognition BCP-47 tags the Web Speech session can be started with. */
+export type RecognitionLang = "en-US" | "ar-EG";
+
+/** Where the submitted transcript comes from. */
+export type SttMode = "browser" | "server";
+
+/** Spoken-reply engine: fast browser voice or an OpenRouter-hosted TTS model. */
+export type TtsEngine = "browser" | "flux" | "fish";
+
+export const STT_MODE_LABELS: Record<SttMode, string> = {
+  browser: "Browser",
+  server: "Server",
+};
+
+export const TTS_ENGINE_LABELS: Record<TtsEngine, string> = {
+  browser: "Browser",
+  flux: "Flux EN",
+  fish: "Fish AR/EN",
+};
+
 export interface VoiceRecognitionResult {
   isFinal: boolean;
   0?: { transcript?: string };
@@ -42,12 +62,47 @@ export function detectDominantScript(text: string): "ar" | "en" | "neutral" {
   return "neutral";
 }
 
-export function getVoicePauseTimeoutMs(textDraft: string, baseMs = 1400): number {
+/**
+ * Endpointing delays (ms) for the hands-free pause timer. The previous
+ * 1400ms base + 400ms continuation bonus kept an ~2s avoidable wait after
+ * every utterance; these shorter rungs submit terminally-punctuated final
+ * results fast while still holding the turn open for mid-thought pauses.
+ */
+export const VOICE_ENDPOINT_FINAL_PUNCT_MS = 650;
+export const VOICE_ENDPOINT_FINAL_MS = 850;
+export const VOICE_ENDPOINT_INTERIM_MS = 1100;
+export const VOICE_ENDPOINT_CONTINUATION_BONUS_MS = 400;
+export const VOICE_ENDPOINT_MAX_MS = 1800;
+
+export interface VoiceEndpointOptions {
+  /** Explicit base delay; defaults to the final/interim rung below. */
+  baseMs?: number;
+  /** True when the latest recognition update contained final text. */
+  isFinal?: boolean;
+}
+
+export function getVoicePauseTimeoutMs(
+  textDraft: string,
+  baseOrOptions: number | VoiceEndpointOptions = {},
+): number {
+  const options: VoiceEndpointOptions =
+    typeof baseOrOptions === "number" ? { baseMs: baseOrOptions } : baseOrOptions;
+  const isFinal = options.isFinal ?? false;
+  // Interim text may still be revised by the engine, so it waits longer
+  // than a final result for the same draft.
+  const baseMs = options.baseMs ?? (isFinal ? VOICE_ENDPOINT_FINAL_MS : VOICE_ENDPOINT_INTERIM_MS);
+
   const trimmed = textDraft.trim();
-  if (!trimmed) return baseMs;
+  if (!trimmed) return Math.min(VOICE_ENDPOINT_MAX_MS, baseMs);
+
+  // A final result ending in terminal punctuation is a complete thought:
+  // submit on the fast rung instead of waiting out the full base delay.
+  if (isFinal && /[.?!…。！？؟]$/.test(trimmed)) {
+    return Math.min(baseMs, VOICE_ENDPOINT_FINAL_PUNCT_MS);
+  }
 
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return baseMs;
+  if (words.length === 0) return Math.min(VOICE_ENDPOINT_MAX_MS, baseMs);
 
   const lastWord = words[words.length - 1].toLowerCase().replace(/[،,.:;!؟?]/g, "");
   const isContinuation =
@@ -56,8 +111,8 @@ export function getVoicePauseTimeoutMs(textDraft: string, baseMs = 1400): number
     lastWord.startsWith("و") ||
     lastWord.startsWith("ف");
 
-  const dynamicBonus = isContinuation ? 400 : 0;
-  return Math.min(2400, baseMs + dynamicBonus);
+  const dynamicBonus = isContinuation ? VOICE_ENDPOINT_CONTINUATION_BONUS_MS : 0;
+  return Math.min(VOICE_ENDPOINT_MAX_MS, baseMs + dynamicBonus);
 }
 
 export function normalizeVoicePrompt(text: string): string {
@@ -97,5 +152,86 @@ export function sendVoicePrompt(
     if (isCurrent() && socket.readyState === WebSocket.OPEN) socket.send("\r");
   });
   return true;
+}
+
+/**
+ * Auto-language state machine for the recognition session language.
+ *
+ * Web Speech cannot switch `lang` mid-session, and an en-US engine fed
+ * Arabic returns *Latinized* gibberish whose dominant script is Latin —
+ * script detection alone can therefore never recover Arabic once the session
+ * started in English. Auto mode treats each recognition session as a probe:
+ * commit to the detected script when one appears, and alternate the probe
+ * language when a session ends without producing any script evidence.
+ */
+export function nextAutoRecognitionLang(
+  current: RecognitionLang,
+  outcome: "ar" | "en" | "neutral",
+): RecognitionLang {
+  if (outcome === "ar") return "ar-EG";
+  if (outcome === "en") return "en-US";
+  return current === "en-US" ? "ar-EG" : "en-US";
+}
+
+/**
+ * Backend `/api/audio/speak` contract for the OpenRouter TTS engines:
+ * `{text, provider: "openrouter", model_id, voice_id}` → `{data_url}`.
+ * The OpenRouter catalog lists Flux as English-only (voice `flux-alexis-en`);
+ * Fish is multilingual and enumerates no voice list — the backend's
+ * documented Fish example voice is used.
+ */
+export interface OpenRouterTtsSpec {
+  model_id: string;
+  voice_id: string;
+}
+
+export const OPENROUTER_TTS_SPECS: Record<"flux" | "fish", OpenRouterTtsSpec> = {
+  flux: { model_id: "deepgram/flux-tts:free", voice_id: "flux-alexis-en" },
+  fish: {
+    model_id: "fish-audio/s2.1-pro-free:free",
+    voice_id: "b347db033a6549378b48d00acb0d06cd",
+  },
+};
+
+export interface OpenRouterTtsRoute extends OpenRouterTtsSpec {
+  /** True when Arabic text forced a reroute from the English-only Flux model. */
+  fallbackToFish: boolean;
+}
+
+/**
+ * Resolve which OpenRouter model/voice a spoken sentence must use. Arabic
+ * text is never sent to Flux (English-only per the OpenRouter catalog); it
+ * reroutes to the multilingual Fish model instead.
+ */
+export function chooseOpenRouterTts(
+  text: string,
+  engine: "flux" | "fish",
+): OpenRouterTtsRoute {
+  if (engine === "flux" && (containsArabic(text) || detectDominantScript(text) === "ar")) {
+    return { ...OPENROUTER_TTS_SPECS.fish, fallbackToFish: true };
+  }
+  return { ...OPENROUTER_TTS_SPECS[engine], fallbackToFish: false };
+}
+
+export interface ServerTranscriptionResponse {
+  ok?: boolean;
+  transcript?: string;
+}
+
+/**
+ * Decide the text to submit after a server transcription attempt. The turn
+ * must never be dropped because the accurate path failed or heard silence:
+ * a failed or empty server transcript falls back to the browser's
+ * provisional draft.
+ */
+export function resolveServerTranscript(
+  response: ServerTranscriptionResponse | null,
+  browserDraft: string,
+): string {
+  if (response?.ok) {
+    const transcript = (response.transcript ?? "").trim();
+    if (transcript) return transcript;
+  }
+  return normalizeVoicePrompt(browserDraft);
 }
 

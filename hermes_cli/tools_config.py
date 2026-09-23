@@ -235,6 +235,8 @@ TOOL_CATEGORIES = {
                  [_key("MISTRAL_API_KEY", "Mistral API key", "https://console.mistral.ai/")], tts_provider="mistral"),
             _row("Google Gemini TTS", "preview", "30 prebuilt voices, controllable via prompts",
                  [_key("GEMINI_API_KEY", "Gemini API key", "https://aistudio.google.com/app/apikey")], tts_provider="gemini"),
+            _row("OpenRouter TTS", "free", "Flux / Fish Audio free voices via OpenRouter",
+                 [_key("OPENROUTER_API_KEY", "OpenRouter API key", "https://openrouter.ai/keys")], tts_provider="openrouter"),
             _row("KittenTTS", "local · free", "Lightweight local ONNX TTS (~25MB), no API key", tts_provider="kittentts",
                  post_setup="kittentts"),
             _row("Piper", "local · free", "Local neural TTS, 44 languages (voices ~20-90MB)", tts_provider="piper",

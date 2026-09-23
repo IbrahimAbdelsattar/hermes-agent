@@ -96,7 +96,6 @@ const ChannelsPage = lazy(() => import("@/pages/ChannelsPage"));
 const WebhooksPage = lazy(() => import("@/pages/WebhooksPage"));
 const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
-const JarvisCallPage = lazy(() => import("@/pages/JarvisCallPage"));
 const PublicApisPage = lazy(() => import("@/pages/PublicApisPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -176,11 +175,6 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/config": ConfigPage,
   "/env": EnvPage,
   "/docs": DocsPage,
-  "/jarvis": JarvisCallPage,
-  "/jarvis-call": JarvisCallPage,
-  "/jarvis-core": JarvisCallPage,
-  "/jarvis-music": JarvisCallPage,
-  "/jarvis-feed": JarvisCallPage,
   "/public-apis": PublicApisPage,
 };
 
@@ -198,11 +192,6 @@ const BUILTIN_NAV_REST: NavItem[] = [
     labelKey: "sessions",
     label: "Sessions",
     icon: MessageSquare,
-  },
-  {
-    path: "/jarvis",
-    label: "Jarvis AI",
-    icon: Sparkles,
   },
   {
     path: "/public-apis",

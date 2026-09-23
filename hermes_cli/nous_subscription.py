@@ -239,7 +239,7 @@ _PROVIDER_LABELS = {
     }),
     "tts": ("edge", {
         "openai": "OpenAI TTS", "elevenlabs": "ElevenLabs", "edge": "Edge TTS", "xai": "xAI TTS",
-        "mistral": "Mistral Voxtral TTS", "neutts": "NeuTTS",
+        "mistral": "Mistral Voxtral TTS", "neutts": "NeuTTS", "openrouter": "OpenRouter TTS",
     }),
     "stt": ("local", {
         "openai": "OpenAI Whisper", "groq": "Groq Whisper", "mistral": "Mistral Voxtral Transcribe",
@@ -345,6 +345,7 @@ def _audio_features(
     tts_available = bool({
         "edge": True, "neutts": True, "openai": managed["tts"] or direct_openai_tts,
         "elevenlabs": _any_env("ELEVENLABS_API_KEY") and not tts_gw, "mistral": _any_env("MISTRAL_API_KEY"),
+        "openrouter": _any_env("OPENROUTER_API_KEY") and not tts_gw,
     }.get(tts_current, False))
     tts = _state(
         "tts", available=tts_available, active=bool(tts_tool_enabled and tts_available),

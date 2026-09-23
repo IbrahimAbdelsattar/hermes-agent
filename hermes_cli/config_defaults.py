@@ -1035,10 +1035,10 @@ DEFAULT_CONFIG = {
     # Text-to-speech. Each provider accepts an optional `max_text_length:` override for the
     # per-request input-character cap; omit to use the provider's documented limit (OpenAI 4096, xAI
     # 15000, MiniMax 10000, ElevenLabs 5k-40k model-aware, Gemini 32000, Edge 5000, Mistral 4000,
-    # NeuTTS/KittenTTS 2000).
+    # OpenRouter 4000 conservative, NeuTTS/KittenTTS 2000).
     "tts": {
         # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" |
-        # "gemini" | "deepinfra" | "neutts" (local) | "kittentts" (local) | "piper" (local)
+        # "gemini" | "deepinfra" | "openrouter" | "neutts" (local) | "kittentts" (local) | "piper" (local)
         "provider": "edge",
         "streaming": {
             # Shortest first sentence (chars) spoken on its own by streaming TTS; shorter openers
@@ -1109,6 +1109,15 @@ DEFAULT_CONFIG = {
             "model": "",  # empty = first tts-tagged model from the live catalog
             "voice": "default",
             # optional "base_url" key overrides DEEPINFRA_BASE_URL for TTS only
+        },
+        "openrouter": {
+            # Free TTS ids: "deepgram/flux-tts:free" (voices flux-*-en, default
+            # flux-alexis-en) or "fish-audio/s2.1-pro-free:free" (free-form voice
+            # id, default from the official docs example). Uses OPENROUTER_API_KEY.
+            "model": "deepgram/flux-tts:free",
+            "voice": "flux-alexis-en",
+            # optional "api_key" overrides OPENROUTER_API_KEY; optional "base_url"
+            # overrides https://openrouter.ai/api/v1 for TTS only.
         },
     },
 
@@ -2616,7 +2625,7 @@ OPTIONAL_ENV_VARS = {
         "integration phase (not needed once the gate is removed)",
         "Nous free-tier shared secret (leave empty unless given one)", password=True,
         category="provider", advanced=True),
-    "OPENROUTER_API_KEY": _env("OpenRouter API key (for vision, web scraping helpers, and MoA)",
+    "OPENROUTER_API_KEY": _env("OpenRouter API key (for vision, web scraping helpers, MoA, and TTS)",
         "OpenRouter API key", url="https://openrouter.ai/keys", password=True, tools=["vision_analyze"],
         category="provider", advanced=True),
     "GOOGLE_API_KEY": _prov("Google AI Studio API key (also recognized as GEMINI_API_KEY)",

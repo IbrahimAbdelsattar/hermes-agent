@@ -26,6 +26,7 @@ _AUDIO_PROBES = {
     "openai": ("https://api.openai.com/v1/models", "OPENAI_API_KEY", "Bearer"),
     "groq": ("https://api.groq.com/openai/v1/models", "GROQ_API_KEY", "Bearer"),
     "elevenlabs": ("https://api.elevenlabs.io/v1/voices", "ELEVENLABS_API_KEY", "xi"),
+    "openrouter": ("https://openrouter.ai/api/v1/models", "OPENROUTER_API_KEY", "Bearer"),
 }
 
 

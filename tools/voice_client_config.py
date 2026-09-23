@@ -206,6 +206,17 @@ def _resolve_tts_client_config() -> Dict[str, Any]:
             return _relay("no deepinfra tts model")
         return _direct(TTS_WIRE_OPENAI, "deepinfra", deepinfra_base_url(di), api_key, model,
                        voice=di.get("voice") or "af_bella", speed=None, min_len=min_len)
+    if provider == "openrouter":
+        from tools import tts_tool_openrouter as tts_or
+        api_key = tts._resolve_provider_key("OPENROUTER_API_KEY", "openrouter")
+        if not api_key:
+            return _relay("no credentials")
+        section = _section(tts_config, "openrouter")
+        model = str(section.get("model") or tts_or.DEFAULT_OPENROUTER_MODEL).strip()
+        voice = tts_or._resolve_openrouter_voice(model, section.get("voice"))
+        base_url = str(section.get("base_url") or tts_or.DEFAULT_OPENROUTER_BASE_URL).strip().rstrip("/")
+        return _direct(TTS_WIRE_OPENAI, "openrouter", base_url, api_key, model,
+                       voice=voice, speed=None, min_len=min_len)
     # edge / minimax / xai / mistral / gemini / neutts / kittentts / piper: server-host-only
     # engines or wire shapes the desktop doesn't speak yet; the relay path serves them.
     return _relay(f"provider {provider!r} has no client wire")

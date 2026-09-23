@@ -114,6 +114,7 @@ _TTS_PROVIDER_CHOICES = [
     ("minimax", "MiniMax TTS (high quality with voice cloning, needs API key)"),
     ("mistral", "Mistral Voxtral TTS (multilingual, native Opus, needs API key)"),
     ("gemini", "Google Gemini TTS (30 prebuilt voices, prompt-controllable, needs API key)"),
+    ("openrouter", "OpenRouter TTS (Flux / Fish Audio free voices, needs API key)"),
     ("neutts", "NeuTTS (local on-device, free, ~300MB model download)"),
     ("kittentts", "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)")]
 # Short label = menu label minus its parenthetical ("Edge TTS", "Mistral Voxtral TTS", ...).
@@ -130,6 +131,8 @@ _TTS_API_KEY_PROVIDERS = {
                 "Mistral TTS API key saved", ""),
     "gemini": (("GEMINI_API_KEY", "GOOGLE_API_KEY"), "GEMINI_API_KEY", "Gemini API key for TTS",
                "Gemini TTS API key saved", "Get a free API key at https://aistudio.google.com/app/apikey"),
+    "openrouter": (("OPENROUTER_API_KEY",), "OPENROUTER_API_KEY", "OpenRouter API key for TTS",
+                   "OpenRouter TTS API key saved", "Get a key at https://openrouter.ai/keys"),
 }
 # provider -> (module, display name, requirement lines, install question, installer)
 _TTS_LOCAL_PROVIDERS = {

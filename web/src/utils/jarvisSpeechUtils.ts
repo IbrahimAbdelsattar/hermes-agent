@@ -1,4 +1,5 @@
 import { authedFetch } from "@/lib/api";
+import { playAudioDataUrl, stopOpenRouterAudio } from "@/lib/chat-voice-tts";
 import { getVoicesSafely, pickArabicVoice, pickEnglishVoice } from "@/lib/speechUtils";
 
 export const sanitizeTextForSpeech = (text: string): string => {
@@ -49,17 +50,65 @@ export const formatDisplayContentWithPunctuation = (text: string): string => {
     .trim();
 };
 
-let activeAudio: HTMLAudioElement | null = null;
+/**
+ * Outcome of one browser SpeechSynthesis attempt.
+ * - "ended": audio actually played through (or was still audibly speaking when
+ *   the wedge guard fired) — the caller is done.
+ * - "canceled": the synthesis was stopped deliberately (stopNabraAudio /
+ *   speechSynthesis.cancel) — the caller must NOT fall back, or the stop
+ *   would be followed by a duplicate backend voice.
+ * - "failed": the engine errored, was denied (autoplay policy), or produced
+ *   no sound — the caller must fall back to the next tier.
+ */
+type BrowserSpeechOutcome = "ended" | "canceled" | "failed";
+
+const speakWithBrowserVoice = (
+  clean: string,
+  isAr: boolean,
+  voice: SpeechSynthesisVoice | null | undefined,
+  timeoutMs: number,
+): Promise<BrowserSpeechOutcome> => {
+  return new Promise<BrowserSpeechOutcome>((resolve) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      resolve("failed");
+      return;
+    }
+    let settled = false;
+    let wedgeGuard: ReturnType<typeof setTimeout> | undefined;
+    const finish = (outcome: BrowserSpeechOutcome) => {
+      if (settled) return;
+      settled = true;
+      if (wedgeGuard !== undefined) clearTimeout(wedgeGuard);
+      resolve(outcome);
+    };
+    const utter = new SpeechSynthesisUtterance(clean);
+    utter.lang = isAr ? "ar-EG" : "en-US";
+    utter.rate = 1.05;
+    utter.pitch = 0.95;
+    if (voice) utter.voice = voice;
+    utter.onend = () => finish("ended");
+    utter.onerror = (event) => {
+      const error = (event as SpeechSynthesisErrorEvent)?.error;
+      finish(error === "canceled" || error === "interrupted" ? "canceled" : "failed");
+    };
+    if (window.speechSynthesis.paused) {
+      try {
+        window.speechSynthesis.resume();
+      } catch {}
+    }
+    window.speechSynthesis.speak(utter);
+    // Wedge guard: an engine that never fires onend/onerror must not hang the
+    // speech queue. Still speaking counts as delivered; silence as failure.
+    wedgeGuard = setTimeout(() => {
+      finish(window.speechSynthesis.speaking || window.speechSynthesis.pending ? "ended" : "failed");
+    }, timeoutMs);
+  });
+};
 
 export const stopNabraAudio = (): void => {
-  if (activeAudio) {
-    try {
-      activeAudio.pause();
-    } catch {
-      // ignore
-    }
-    activeAudio = null;
-  }
+  // The backend tier plays data-URL audio through the shared player, so stop
+  // both surfaces (the shared player also settles its pending promise).
+  stopOpenRouterAudio();
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try {
       window.speechSynthesis.cancel();
@@ -82,31 +131,24 @@ export const speakWithNabra = async (
 
   const isAr = /[\u0600-\u06FF]/.test(clean);
 
-  // Fast path for Jarvis: Browser Web SpeechSynthesis API gives instant (<50ms) natural speech
+  // Fast path for Jarvis: Browser Web SpeechSynthesis API gives instant (<50ms) natural speech.
+  // A failed attempt must fall through to the backend — a silent browser
+  // engine (no voices, autoplay denial, synthesis error) must never swallow
+  // the spoken reply.
   if (persona === 'jarvis' && 'speechSynthesis' in window) {
     try {
       const voices = await getVoicesSafely();
-      const voice = isAr
-        ? pickArabicVoice(voices, 'jarvis')
-        : pickEnglishVoice(voices, 'jarvis');
-
-      await new Promise<void>((resolve) => {
-        const utter = new SpeechSynthesisUtterance(clean);
-        utter.lang = isAr ? 'ar-EG' : 'en-US';
-        utter.rate = 1.05;
-        utter.pitch = 0.95;
-        if (voice) utter.voice = voice;
-        utter.onend = () => resolve();
-        utter.onerror = () => resolve();
-        if (window.speechSynthesis.paused) {
-          try {
-            window.speechSynthesis.resume();
-          } catch {}
-        }
-        window.speechSynthesis.speak(utter);
-        setTimeout(resolve, 25000);
-      });
-      return;
+      // No voices at all means the browser engine cannot speak; skip
+      // straight to the backend instead of emitting silence.
+      if (voices.length > 0) {
+        const voice = isAr
+          ? pickArabicVoice(voices, 'jarvis')
+          : pickEnglishVoice(voices, 'jarvis');
+        const outcome = await speakWithBrowserVoice(clean, isAr, voice, 25000);
+        if (outcome === 'ended') return;
+        if (outcome === 'canceled') return;
+        // "failed": fall through to the Hermes audio backend below.
+      }
     } catch (e) {
       console.warn('Browser speech instant path notice:', e);
     }
@@ -128,20 +170,12 @@ export const speakWithNabra = async (
 
     if (res.ok) {
       const data = await res.json().catch(() => null);
-      if (data?.data_url) {
-        const audio = new Audio(data.data_url);
-        activeAudio = audio;
-        await new Promise<void>((resolve) => {
-          const done = () => {
-            if (activeAudio === audio) activeAudio = null;
-            resolve();
-          };
-          audio.onended = done;
-          audio.onerror = done;
-          audio.play().catch(done);
-          setTimeout(done, 30000);
-        });
-        return;
+      const dataUrl = typeof data?.data_url === 'string' ? data.data_url : '';
+      if (dataUrl.startsWith('data:audio')) {
+        const played = await playAudioDataUrl(dataUrl);
+        if (played) return;
+        // Playback failed (autoplay rejection, decode error): the final
+        // browser attempt below is the last resort.
       }
     }
   } catch (err) {
@@ -155,17 +189,7 @@ export const speakWithNabra = async (
       const voice = isAr
         ? pickArabicVoice(voices, persona)
         : pickEnglishVoice(voices, persona);
-      await new Promise<void>((resolve) => {
-        const utter = new SpeechSynthesisUtterance(clean);
-        utter.lang = isAr ? 'ar-EG' : 'en-US';
-        utter.rate = 1.05;
-        utter.pitch = 0.95;
-        if (voice) utter.voice = voice;
-        utter.onend = () => resolve();
-        utter.onerror = () => resolve();
-        window.speechSynthesis.speak(utter);
-        setTimeout(resolve, 20000);
-      });
+      await speakWithBrowserVoice(clean, isAr, voice, 20000);
     } catch {}
   }
 };

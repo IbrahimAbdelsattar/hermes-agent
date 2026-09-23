@@ -25,15 +25,50 @@ import {
 import {
   detectDominantScript,
   getVoicePauseTimeoutMs,
+  nextAutoRecognitionLang,
   normalizeVoicePrompt,
+  STT_MODE_LABELS,
+  TTS_ENGINE_LABELS,
+  type SttMode,
+  type TtsEngine,
   type VoiceLanguageMode,
   type VoiceRecognitionEvent,
 } from "@/lib/chat-voice";
+import { speakViaOpenRouter, stopOpenRouterAudio } from "@/lib/chat-voice-tts";
+import { transcribeAudioBlob } from "@/lib/server-transcribe";
 import { speakWithNabra, stopNabraAudio } from "@/utils/jarvisSpeechUtils";
 import { JarvisUltronVoiceOrb } from "./JarvisUltronVoiceOrb";
 
 const VOICE_LANG_STORAGE_KEY = "hermes_chat_voice_lang";
 const ORB_MODE_STORAGE_KEY = "hermes_chat_orb_mode";
+const STT_MODE_STORAGE_KEY = "hermes_chat_stt_mode";
+const TTS_ENGINE_STORAGE_KEY = "hermes_chat_tts_engine";
+const SPEECH_STORAGE_KEY = "hermes_chat_speech_enabled";
+
+/**
+ * Max buffered utterance audio: ~2min at the 1s MediaRecorder timeslice.
+ * Bounds memory when the mic stays on idly; normal turns keep the full
+ * capture from session start.
+ */
+const MAX_UTTERANCE_CHUNKS = 120;
+/** Upper bound for the recorder's async stop handshake on submit. */
+const UTTERANCE_STOP_TIMEOUT_MS = 1500;
+
+/**
+ * The user's explicit Voice choice. `null` means they never touched the
+ * Voice toggle, so spoken replies simply follow the mic: enabling the Mic
+ * enables speech. An explicit choice (persisted) always wins over the
+ * default so a deliberate mute survives reloads.
+ */
+const readStoredSpeechPreference = (): "on" | "off" | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = localStorage.getItem(SPEECH_STORAGE_KEY);
+    return saved === "on" || saved === "off" ? saved : null;
+  } catch {
+    return null;
+  }
+};
 
 interface ChatVoiceControlsProps {
   channel: string;
@@ -80,8 +115,9 @@ export function ChatVoiceControls({
   onSubmit,
 }: ChatVoiceControlsProps) {
   const feed = useMemo(() => new EventsFeedClient(), []);
+  const storedSpeechPreference = readStoredSpeechPreference();
   const [liveEnabled, setLiveEnabled] = useState(false);
-  const [speechEnabled, setSpeechEnabled] = useState(false);
+  const [speechEnabled, setSpeechEnabled] = useState(storedSpeechPreference === "on");
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Voice ready");
   const [draft, setDraft] = useState("");
@@ -118,13 +154,42 @@ export function ChatVoiceControls({
   const languageModeRef = useRef<VoiceLanguageMode>(languageMode);
   const activeAutoLangRef = useRef<"en-US" | "ar-EG">("en-US");
 
+  const [sttMode, setSttMode] = useState<SttMode>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem(STT_MODE_STORAGE_KEY);
+        if (saved === "browser" || saved === "server") {
+          return saved;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "browser";
+  });
+
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem(TTS_ENGINE_STORAGE_KEY);
+        if (saved === "browser" || saved === "flux" || saved === "fish") {
+          return saved;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "browser";
+  });
+
   const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
   const liveEnabledRef = useRef(false);
-  const speechEnabledRef = useRef(false);
+  const speechEnabledRef = useRef(storedSpeechPreference === "on");
+  const speechExplicitRef = useRef(storedSpeechPreference !== null);
   const recognitionRef = useRef<RecognitionLike | null>(null);
   const recognitionRunningRef = useRef(false);
   const assistantBusyRef = useRef(false);
@@ -134,6 +199,14 @@ export function ChatVoiceControls({
   const interimDraftRef = useRef("");
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // "STT: Server" mode: MediaRecorder captures the utterance while browser
+  // recognition still drives endpointing; the backend transcribes the blob.
+  const utteranceRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  // Bounded retry for Chrome's InvalidStateError when a session starts too
+  // soon after the previous one ended.
+  const startRetryCountRef = useRef(0);
 
   const rawReplyRef = useRef("");
   const spokenIndexRef = useRef(0);
@@ -147,6 +220,68 @@ export function ChatVoiceControls({
     languageModeRef.current = languageMode;
   }, [languageMode]);
 
+  const sttModeRef = useRef<SttMode>(sttMode);
+  const ttsEngineRef = useRef<TtsEngine>(ttsEngine);
+
+  useEffect(() => {
+    sttModeRef.current = sttMode;
+  }, [sttMode]);
+  useEffect(() => {
+    ttsEngineRef.current = ttsEngine;
+  }, [ttsEngine]);
+
+  /** Begin capturing the current utterance (server STT mode only). */
+  const startUtteranceRecorder = useCallback(() => {
+    if (sttModeRef.current !== "server") return;
+    if (utteranceRecorderRef.current || !mediaStreamRef.current) return;
+    if (typeof MediaRecorder === "undefined") return;
+    recordedChunksRef.current = [];
+    try {
+      const recorder = new MediaRecorder(mediaStreamRef.current);
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+          // Drop the oldest slices past the cap so an idle mic left on
+          // indefinitely cannot grow the buffer without bound.
+          const excess = recordedChunksRef.current.length - MAX_UTTERANCE_CHUNKS;
+          if (excess > 0) recordedChunksRef.current.splice(0, excess);
+        }
+      };
+      // Timeslice keeps partial audio usable even if the tab dies mid-turn.
+      recorder.start(1000);
+      utteranceRecorderRef.current = recorder;
+    } catch {
+      // Recording is best-effort; the browser transcript remains the fallback.
+    }
+  }, []);
+
+  /** Stop the utterance recorder and resolve with the captured blob (or null). */
+  const stopUtteranceRecorder = useCallback((): Promise<Blob | null> => {
+    const recorder = utteranceRecorderRef.current;
+    utteranceRecorderRef.current = null;
+    if (!recorder || recorder.state === "inactive") {
+      return Promise.resolve(null);
+    }
+    return new Promise<Blob | null>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => finish(null), UTTERANCE_STOP_TIMEOUT_MS);
+      const finish = (blob: Blob | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(blob);
+      };
+      recorder.onstop = () => {
+        finish(new Blob(recordedChunksRef.current, { type: recorder.mimeType || "audio/webm" }));
+      };
+      try {
+        recorder.stop();
+      } catch {
+        finish(null);
+      }
+    });
+  }, []);
+
   const startAudioAnalyser = useCallback(async () => {
     if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
     try {
@@ -158,7 +293,14 @@ export function ChatVoiceControls({
         return;
       }
       mediaStreamRef.current = stream;
-      const AudioCtxCtor = window.AudioContext || (window as any).webkitAudioContext;
+      // The mic stream can resolve after recognition already started: kick
+      // off server-STT capture now so the utterance onset is not clipped.
+      if (sttModeRef.current === "server" && recognitionRunningRef.current) {
+        startUtteranceRecorder();
+      }
+      const AudioCtxCtor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (AudioCtxCtor) {
         const ctx = new AudioCtxCtor();
         audioContextRef.current = ctx;
@@ -175,7 +317,7 @@ export function ChatVoiceControls({
     } catch (e) {
       console.warn("[ChatVoiceControls] Mic audio analyser setup note:", e);
     }
-  }, []);
+  }, [startUtteranceRecorder]);
 
   const stopAudioAnalyser = useCallback(() => {
     if (mediaStreamRef.current) {
@@ -231,6 +373,23 @@ export function ChatVoiceControls({
     }
   }, [connected]);
 
+  const submitCurrentDraftRef = useRef<() => boolean>(() => false);
+
+  const submitTranscribed = useCallback(
+    (finalPrompt: string, note: string) => {
+      if (onSubmit(finalPrompt)) {
+        setStatus(note);
+        return true;
+      }
+      waitingForReplyRef.current = false;
+      assistantBusyRef.current = false;
+      setStatus("Chat is reconnecting");
+      maybeResumeListening();
+      return false;
+    },
+    [maybeResumeListening, onSubmit],
+  );
+
   const submitCurrentDraft = useCallback((): boolean => {
     clearSilenceTimer();
     const fullText = (
@@ -240,6 +399,8 @@ export function ChatVoiceControls({
     const prompt = normalizeVoicePrompt(fullText);
     if (!prompt) return false;
 
+    // Clear the draft synchronously so a second trigger racing the first
+    // (silence timer vs Send click) can never resubmit the same utterance.
     speechAccumulatorRef.current = "";
     interimDraftRef.current = "";
     setDraft("");
@@ -247,18 +408,60 @@ export function ChatVoiceControls({
     waitingForReplyRef.current = true;
     assistantBusyRef.current = true;
     stopRecognition();
+    const recording = stopUtteranceRecorder();
 
-    if (onSubmit(prompt)) {
-      setStatus("Sent to Hermes");
-      return true;
-    } else {
-      waitingForReplyRef.current = false;
-      assistantBusyRef.current = false;
-      setStatus("Chat is reconnecting");
-      maybeResumeListening();
-      return false;
+    if (sttModeRef.current !== "server") {
+      return submitTranscribed(prompt, "Sent to Hermes");
     }
-  }, [clearSilenceTimer, maybeResumeListening, onSubmit, stopRecognition]);
+
+    // Server mode: transcribe the captured recording, then submit the
+    // backend's transcript. The browser draft is the fallback when the
+    // request fails or the provider hears nothing, so the turn is never
+    // dropped by the accurate path.
+    setStatus("Transcribing on server…");
+    void (async () => {
+      let finalPrompt = prompt;
+      try {
+        const blob = await recording;
+        if (blob && blob.size > 0) {
+          finalPrompt = await transcribeAudioBlob(blob, prompt);
+        }
+      } catch {
+        // keep the browser draft
+      }
+      if (!mountedRef.current) return;
+      submitTranscribed(finalPrompt, "Sent to Hermes (server transcript)");
+    })();
+    return true;
+  }, [clearSilenceTimer, stopRecognition, stopUtteranceRecorder, submitTranscribed]);
+
+  useEffect(() => {
+    submitCurrentDraftRef.current = submitCurrentDraft;
+  }, [submitCurrentDraft]);
+
+  /** Restart the pause countdown + silence timer for the buffered draft. */
+  const armPauseTimer = useCallback(
+    (draftText: string, isFinal = false) => {
+      clearSilenceTimer();
+      const timeoutMs = getVoicePauseTimeoutMs(draftText, { isFinal });
+      const deadline = Date.now() + timeoutMs;
+      setPauseCountdown(Math.ceil(timeoutMs / 1000));
+
+      countdownIntervalRef.current = setInterval(() => {
+        const remainingMs = Math.max(0, deadline - Date.now());
+        setPauseCountdown(Math.ceil(remainingMs / 1000));
+        if (remainingMs <= 0 && countdownIntervalRef.current) {
+          clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null;
+        }
+      }, 200);
+
+      silenceTimerRef.current = setTimeout(() => {
+        submitCurrentDraftRef.current();
+      }, timeoutMs);
+    },
+    [clearSilenceTimer],
+  );
 
   const pumpSpeechQueue = useCallback(async () => {
     if (speakingRef.current || !speechEnabledRef.current) {
@@ -276,7 +479,23 @@ export function ChatVoiceControls({
     ) {
       const next = speechQueueRef.current.shift();
       if (!next) break;
-      await speakWithNabra(next, "jarvis", false);
+      const engine = ttsEngineRef.current;
+      let spoke = false;
+      if (engine !== "browser") {
+        const result = await speakViaOpenRouter(next, engine);
+        spoke = result.spoke;
+        if (result.fallbackToFish) {
+          setStatus("Flux is English-only — used Fish for Arabic");
+        }
+      }
+      // A cancellation (mute / new message) during the await must not
+      // double-speak through the fallback voice.
+      if (!spoke && generation === speechGenerationRef.current) {
+        if (engine !== "browser") {
+          setStatus("OpenRouter TTS unavailable — using the browser voice");
+        }
+        await speakWithNabra(next, "jarvis", false);
+      }
     }
     if (generation !== speechGenerationRef.current) return;
     speakingRef.current = false;
@@ -339,7 +558,14 @@ export function ChatVoiceControls({
     recognitionRef.current = recognition;
 
     recognition.onstart = () => {
+      startRetryCountRef.current = 0;
       recognitionRunningRef.current = true;
+      // Server STT mode: begin capturing BEFORE the first word so the
+      // backend transcript includes the utterance onset. No-op when already
+      // recording — recognition restarts mid-turn must not discard audio —
+      // and each submitted turn stops the recorder, so the next turn starts
+      // a fresh capture here.
+      if (sttModeRef.current === "server") startUtteranceRecorder();
       setListening(true);
       const label =
         mode === "ar"
@@ -380,42 +606,32 @@ export function ChatVoiceControls({
 
       setDraft(currentDraft);
 
-      // In auto mode, adapt language on detected script
+      // Backstop: capture normally starts on recognition start (before the
+      // first word); retry here in case the mic stream was not ready then.
+      // The recorder runs until the draft is submitted.
+      if (!utteranceRecorderRef.current) startUtteranceRecorder();
+
+      const hasFinalText = speechAccumulatorRef.current.trim().length > 0;
+
+      // In auto mode, adapt language on detected script. Web Speech cannot
+      // change lang mid-session: when the script flips, restart the session
+      // with the new language while keeping the buffered draft — otherwise
+      // the rest of the utterance keeps being Latinized by the old engine.
       if (languageModeRef.current === "auto") {
-        const script = detectDominantScript(currentDraft);
-        if (script === "ar" && activeAutoLangRef.current !== "ar-EG") {
-          activeAutoLangRef.current = "ar-EG";
-        } else if (script === "en" && activeAutoLangRef.current !== "en-US") {
-          activeAutoLangRef.current = "en-US";
+        const nextLang = nextAutoRecognitionLang(
+          activeAutoLangRef.current,
+          detectDominantScript(currentDraft),
+        );
+        if (nextLang !== activeAutoLangRef.current) {
+          activeAutoLangRef.current = nextLang;
+          stopRecognition();
+          armPauseTimer(currentDraft, hasFinalText);
+          window.setTimeout(() => startListeningRef.current(), 250);
+          return;
         }
       }
 
-      clearSilenceTimer();
-
-      const timeoutMs = getVoicePauseTimeoutMs(currentDraft, 1400);
-      const deadline = Date.now() + timeoutMs;
-      setPauseCountdown(Math.ceil(timeoutMs / 1000));
-
-      countdownIntervalRef.current = setInterval(() => {
-        const remainingMs = Math.max(0, deadline - Date.now());
-        const remSecs = Math.ceil(remainingMs / 1000);
-        setPauseCountdown(remSecs);
-        if (remainingMs <= 0) {
-          if (countdownIntervalRef.current) {
-            clearInterval(countdownIntervalRef.current);
-            countdownIntervalRef.current = null;
-          }
-        }
-      }, 200);
-
-      silenceTimerRef.current = setTimeout(() => {
-        if (countdownIntervalRef.current) {
-          clearInterval(countdownIntervalRef.current);
-          countdownIntervalRef.current = null;
-        }
-        setPauseCountdown(null);
-        void submitCurrentDraft();
-      }, timeoutMs);
+      armPauseTimer(currentDraft, hasFinalText);
     };
 
     recognition.onerror = (event) => {
@@ -434,9 +650,25 @@ export function ChatVoiceControls({
       recognitionRunningRef.current = false;
       recognitionRef.current = null;
       setListening(false);
-      // If idle without an active draft, seamlessly resume listening
-      if (!speechAccumulatorRef.current && !interimDraftRef.current) {
-        maybeResumeListening();
+      // Rearm even while a draft is buffered: Chrome ends a continuous
+      // session after a few seconds of silence (or a no-speech/network
+      // error), and speech dictated afterwards must still be captured into
+      // the pending draft instead of being lost until the turn completes.
+      // maybeResumeListening keeps its own guards (live, connected, not
+      // busy/waiting-for-reply/speaking).
+      maybeResumeListening();
+      // Auto mode: a session that ended with no script evidence probes the
+      // other language next time — an en-US session fed Arabic yields
+      // Latinized text, which script detection alone can never recover from.
+      if (
+        languageModeRef.current === "auto" &&
+        !speechAccumulatorRef.current &&
+        !interimDraftRef.current
+      ) {
+        activeAutoLangRef.current = nextAutoRecognitionLang(
+          activeAutoLangRef.current,
+          "neutral",
+        );
       }
     };
 
@@ -445,38 +677,132 @@ export function ChatVoiceControls({
     } catch {
       recognitionRef.current = null;
       recognitionRunningRef.current = false;
-      setStatus("Could not start the microphone");
+      // Chrome throws InvalidStateError when a new session starts too soon
+      // after the previous one ended; retry with backoff before giving up so
+      // hands-free does not silently die with the toggle still on.
+      if (startRetryCountRef.current < 2) {
+        startRetryCountRef.current += 1;
+        window.setTimeout(() => startListeningRef.current(), 400);
+      } else {
+        startRetryCountRef.current = 0;
+        liveEnabledRef.current = false;
+        setLiveEnabled(false);
+        setStatus("Could not start the microphone");
+      }
     }
   }, [
-    clearSilenceTimer,
+    armPauseTimer,
     connected,
     maybeResumeListening,
-    submitCurrentDraft,
+    startUtteranceRecorder,
+    stopRecognition,
   ]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
   }, [startListening]);
 
+  /**
+   * Browsers gate SpeechSynthesis and audio autoplay behind a user gesture.
+   * The Mic/Voice toggle IS that gesture: prime the synthesis engine inside
+   * it (a muted, empty utterance) so the first spoken reply — which arrives
+   * later, from a network event outside any gesture — is not silently
+   * swallowed by the autoplay policy. Keyboard activation (Enter/Space)
+   * dispatches click too, so both input paths unlock speech.
+   */
+  const primeSpeechForGesture = useCallback(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    try {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) return;
+      const primer = new SpeechSynthesisUtterance(" ");
+      primer.volume = 0;
+      window.speechSynthesis.speak(primer);
+      window.speechSynthesis.cancel();
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const toggleLive = useCallback(() => {
     const next = !liveEnabledRef.current;
     liveEnabledRef.current = next;
     setLiveEnabled(next);
     clearSilenceTimer();
+    startRetryCountRef.current = 0;
     speechAccumulatorRef.current = "";
     interimDraftRef.current = "";
     setDraft("");
     if (next) {
+      // Spoken replies follow the mic by default: a live call speaks unless
+      // the user explicitly muted Voice (that choice is persisted and wins).
+      if (!speechExplicitRef.current) {
+        speechEnabledRef.current = true;
+        setSpeechEnabled(true);
+      }
+      primeSpeechForGesture();
       setStatus(connected ? "Starting microphone" : "Chat is reconnecting");
       window.setTimeout(() => startListeningRef.current(), 0);
       void startAudioAnalyser();
     } else {
       waitingForReplyRef.current = false;
       stopRecognition();
+      void stopUtteranceRecorder();
       stopAudioAnalyser();
       setStatus("Microphone off");
     }
-  }, [clearSilenceTimer, connected, startAudioAnalyser, stopAudioAnalyser, stopRecognition]);
+  }, [
+    clearSilenceTimer,
+    connected,
+    primeSpeechForGesture,
+    startAudioAnalyser,
+    stopAudioAnalyser,
+    stopRecognition,
+    stopUtteranceRecorder,
+  ]);
+
+  const toggleSttMode = useCallback(() => {
+    const next: SttMode = sttModeRef.current === "browser" ? "server" : "browser";
+    sttModeRef.current = next;
+    setSttMode(next);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(STT_MODE_STORAGE_KEY, next);
+      } catch {
+        // ignore
+      }
+    }
+    if (next === "browser") {
+      void stopUtteranceRecorder();
+      setStatus("Browser speech recognition (fast, on-device engine)");
+    } else {
+      // Record from the next utterance on; a live draft keeps its browser
+      // transcript as the fallback if capture starts too late.
+      if (liveEnabledRef.current && mediaStreamRef.current) startUtteranceRecorder();
+      setStatus("Server transcription on (backend STT provider)");
+    }
+  }, [startUtteranceRecorder, stopUtteranceRecorder]);
+
+  const toggleTtsEngine = useCallback(() => {
+    const order: TtsEngine[] = ["browser", "flux", "fish"];
+    const next = order[(order.indexOf(ttsEngineRef.current) + 1) % order.length];
+    ttsEngineRef.current = next;
+    setTtsEngine(next);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(TTS_ENGINE_STORAGE_KEY, next);
+      } catch {
+        // ignore
+      }
+    }
+    if (next !== "browser") stopOpenRouterAudio();
+    setStatus(
+      next === "browser"
+        ? "Browser voice replies (fast)"
+        : next === "flux"
+          ? "Flux TTS on (English-only; Arabic falls back to Fish)"
+          : "Fish TTS on (multilingual)",
+    );
+  }, []);
 
   const toggleLanguage = useCallback(() => {
     const prev = languageModeRef.current;
@@ -517,7 +843,18 @@ export function ChatVoiceControls({
     const next = !speechEnabledRef.current;
     speechEnabledRef.current = next;
     setSpeechEnabled(next);
+    // An explicit Voice choice persists and overrides the speak-with-mic
+    // default on future sessions.
+    speechExplicitRef.current = true;
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(SPEECH_STORAGE_KEY, next ? "on" : "off");
+      } catch {
+        // ignore
+      }
+    }
     if (next) {
+      primeSpeechForGesture();
       setStatus("Spoken replies on");
       drainReply(false);
     } else {
@@ -526,10 +863,11 @@ export function ChatVoiceControls({
       speakingRef.current = false;
       setIsAssistantSpeaking(false);
       stopNabraAudio();
+      stopOpenRouterAudio();
       setStatus("Spoken replies off");
       maybeResumeListening();
     }
-  }, [drainReply, maybeResumeListening]);
+  }, [drainReply, maybeResumeListening, primeSpeechForGesture]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -537,19 +875,37 @@ export function ChatVoiceControls({
       mountedRef.current = false;
       clearSilenceTimer();
       stopRecognition();
+      void stopUtteranceRecorder();
       stopAudioAnalyser();
       stopNabraAudio();
+      stopOpenRouterAudio();
     };
-  }, [clearSilenceTimer, stopAudioAnalyser, stopRecognition]);
+  }, [clearSilenceTimer, stopAudioAnalyser, stopRecognition, stopUtteranceRecorder]);
 
   useEffect(() => {
     if (!connected) {
       stopRecognition();
+      // A reply pending across a PTY drop will never arrive on this link;
+      // unlatch so hands-free can resume once the chat reconnects.
+      waitingForReplyRef.current = false;
+      assistantBusyRef.current = false;
       setStatus("Chat is reconnecting");
     } else {
       maybeResumeListening();
+      // A draft buffered when the link dropped lost its pause timer (cleared
+      // by stopRecognition); re-arm so it still auto-submits.
+      const buffered = (
+        speechAccumulatorRef.current +
+        (interimDraftRef.current ? ` ${interimDraftRef.current}` : "")
+      ).trim();
+      if (buffered && liveEnabledRef.current) {
+        armPauseTimer(
+          normalizeVoicePrompt(buffered),
+          speechAccumulatorRef.current.trim().length > 0,
+        );
+      }
     }
-  }, [connected, maybeResumeListening, stopRecognition]);
+  }, [armPauseTimer, connected, maybeResumeListening, stopRecognition]);
 
   useEffect(() => {
     if (!liveEnabled && !speechEnabled) {
@@ -593,6 +949,8 @@ export function ChatVoiceControls({
       setIsAssistantSpeaking(false);
       stopRecognition();
       stopNabraAudio();
+      stopOpenRouterAudio();
+      void stopUtteranceRecorder();
       setDraft("");
       setStatus("Hermes is working");
     });
@@ -630,7 +988,7 @@ export function ChatVoiceControls({
       offComplete();
       feed.close();
     };
-  }, [channel, drainReply, feed, liveEnabled, maybeResumeListening, speechEnabled, stopRecognition]);
+  }, [channel, drainReply, feed, liveEnabled, maybeResumeListening, speechEnabled, stopRecognition, stopUtteranceRecorder]);
 
   const voiceSupported = speechRecognitionConstructor() !== null;
   const langLabel =
@@ -641,6 +999,18 @@ export function ChatVoiceControls({
       : languageMode === "ar"
         ? "Language: Arabic - مصرية (click to switch to Auto)"
         : "Language: Auto-Adaptive (click to switch to English)";
+  const sttLabel = `STT: ${STT_MODE_LABELS[sttMode]}`;
+  const sttTitle =
+    sttMode === "browser"
+      ? "Transcription: browser Web Speech engine (click for server transcription — more accurate, adds upload latency)"
+      : "Transcription: server STT provider via /api/audio/transcribe (click for browser Web Speech — lower latency)";
+  const ttsLabel = `TTS: ${TTS_ENGINE_LABELS[ttsEngine]}`;
+  const ttsTitle =
+    ttsEngine === "browser"
+      ? "Replies: fast browser voice (click for OpenRouter Flux TTS — English-only)"
+      : ttsEngine === "flux"
+        ? "Replies: OpenRouter Flux TTS (deepgram/flux-tts:free, English-only; Arabic text is spoken with Fish) (click for Fish)"
+        : "Replies: OpenRouter Fish TTS (fish-audio/s2.1-pro-free:free, multilingual) (click for the fast browser voice)";
 
   return (
     <div className="mb-2 flex shrink-0 flex-col gap-1.5" style={{ color: foreground }}>
@@ -706,6 +1076,26 @@ export function ChatVoiceControls({
             >
               <Globe className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
               <span>{langLabel}</span>
+            </Button>
+            <Button
+              ghost
+              size="sm"
+              onClick={toggleSttMode}
+              title={sttTitle}
+              aria-label={`Transcription mode: ${STT_MODE_LABELS[sttMode]}`}
+              className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+            >
+              <span>{sttLabel}</span>
+            </Button>
+            <Button
+              ghost
+              size="sm"
+              onClick={toggleTtsEngine}
+              title={ttsTitle}
+              aria-label={`Reply voice: ${TTS_ENGINE_LABELS[ttsEngine]}`}
+              className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+            >
+              <span>{ttsLabel}</span>
             </Button>
             <Button
               ghost
@@ -783,6 +1173,26 @@ export function ChatVoiceControls({
           >
             <Globe className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
             <span>{langLabel}</span>
+          </Button>
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleSttMode}
+            title={sttTitle}
+            aria-label={`Transcription mode: ${STT_MODE_LABELS[sttMode]}`}
+            className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+          >
+            <span>{sttLabel}</span>
+          </Button>
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleTtsEngine}
+            title={ttsTitle}
+            aria-label={`Reply voice: ${TTS_ENGINE_LABELS[ttsEngine]}`}
+            className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+          >
+            <span>{ttsLabel}</span>
           </Button>
           <Button
             ghost
