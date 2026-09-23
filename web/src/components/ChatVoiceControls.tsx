@@ -1018,6 +1018,12 @@ export function ChatVoiceControls({
       feed.close();
       return;
     }
+    // Paired channel resolves asynchronously with the attach token; wait for
+    // it instead of subscribing to an empty channel (the server closes 4400).
+    if (!channel) {
+      feed.close();
+      return;
+    }
     let disposed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;

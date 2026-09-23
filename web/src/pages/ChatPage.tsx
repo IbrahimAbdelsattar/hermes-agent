@@ -93,7 +93,10 @@ import {
   ptyRejectionBanner,
   type PtyBannerAction,
 } from "@/lib/pty-close-copy";
-import { ptyAttachToken } from "@/lib/pty-attach-token";
+import {
+  chatScopeKey,
+  resolveChatTabPair,
+} from "@/lib/chat-tab-identity";
 import { loseWebglContexts } from "@/lib/xterm-webgl-release";
 import { PluginSlot } from "@/plugins";
 import { useTheme } from "@/themes";
@@ -105,19 +108,12 @@ import { sendVoicePrompt } from "@/lib/chat-voice";
 // second tab — including a Chrome "Duplicate tab" — gets its own PTY instead of
 // taking over this one. See #115304.
 
-// Channel id ties this chat tab's PTY child (publisher) to its sidebar
-// (subscriber).  Generated once per mount so a tab refresh starts a fresh
-// channel — the previous PTY child terminates with the old WS, and its
-// channel auto-evicts when no subscribers remain.
-function generateChannelId(scope?: string): string {
-  const prefix = scope ? "chat" : "chat-fresh";
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `${prefix}-${crypto.randomUUID()}`;
-  }
-  return `${prefix}-${Math.random().toString(36).slice(2)}-${Date.now().toString(
-    36,
-  )}`;
-}
+// The `/api/events` channel is paired with that attach token (see
+// `chat-tab-identity.ts`): derived deterministically from the claimed token +
+// resume/profile scope, so a reload reattaches to the living PTY AND
+// resubscribes to the channel its sidecar still publishes on. A random channel
+// per mount reattached the PTY but stranded its `message.*` frames on the old
+// channel — the terminal replied while voice stayed silent.
 
 // Colors for the terminal body.  Matches the dashboard's dark teal canvas
 // with cream foreground — we intentionally don't pick monokai or a loud
@@ -385,10 +381,16 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   // management profile. Changing it remounts the terminal (key below /
   // effect dep) so the user explicitly starts a fresh scoped session.
   const { profile: scopedProfile } = useProfileScope();
-  const channel = useMemo(
-    () => generateChannelId(`${resumeParam ?? ""}\0${scopedProfile}`),
+  // PTY identity scope: resume target + profile already key the server-side
+  // registry entry, so the derived channel follows them too.
+  const tabScope = useMemo(
+    () => chatScopeKey(resumeParam, scopedProfile),
     [resumeParam, scopedProfile],
   );
+  // Resolved asynchronously with the attach token (Web Lock claim); children
+  // subscribe once it lands. Empty means "not yet resolved" — ChatSidebar
+  // already guards that; ChatVoiceControls got the same guard.
+  const [channel, setChannel] = useState("");
   const titleScope = `${channel}\0${reconnectNonce}`;
   const sessionTitle =
     sessionTitleState.scope === titleScope ? sessionTitleState.title : null;
@@ -1240,13 +1242,17 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     };
     void (async () => {
       if (unmounting) return;
-      const params: Record<string, string> = { channel };
+      // Keep-alive identity + paired events channel: reattach to this tab's
+      // living PTY across refresh/transient drops. A forced-fresh start
+      // rotates the token (and with it the derived channel) so the previous
+      // keep-alive PTY is not reattached (registry reaps it).
+      const pair = await resolveChatTabPair(tabScope, forceFresh);
+      if (unmounting || ticketSuperseded) return;
+      setChannel(pair.channel);
+      const params: Record<string, string> = { channel: pair.channel };
       if (resumeParam) params.resume = resumeParam;
       if (forceFresh) params.fresh = "1";
-      // Keep-alive identity: reattach to this tab's living PTY across
-      // refresh/transient drops. A forced-fresh start rotates the token so
-      // the previous keep-alive PTY is not reattached (registry reaps it).
-      params.attach = await ptyAttachToken(forceFresh);
+      params.attach = pair.attach;
       // Profile-scoped chat: the PTY child gets HERMES_HOME pointed at the
       // selected profile, so the conversation runs with that profile's model,
       // skills, memory, and sessions (see web_server._resolve_chat_argv).
@@ -1628,7 +1634,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     };
   }, [
     hasActivated,
-    channel,
+    tabScope,
     clearReconnectTimer,
     resumeParam,
     scopedProfile,

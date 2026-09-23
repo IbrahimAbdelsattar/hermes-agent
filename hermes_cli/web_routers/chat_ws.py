@@ -66,10 +66,28 @@ def _ws_auth_mode() -> str:
 
 
 async def _broadcast_event(app: Any, channel: str, payload: str) -> None:
-    """Fan out one publisher frame to every subscriber on `channel`."""
+    """Fan out one publisher frame to every subscriber on `channel`.
+
+    A reattached tab may subscribe on a channel newer than the PTY child's
+    spawn-time sidecar URL (a reload reused the attach token while minting a
+    fresh random channel). Alias targets recorded on the PTY session are
+    fanned out too, so the old publisher still reaches
+    the reattached tab. Aliases live on the session: reaping the PTY drops
+    them, and they never cross attach tokens.
+    """
     event_channels, event_lock = _get_event_state(app)
     async with event_lock:
         subs = list(event_channels.get(channel, ()))
+        alias_targets: list[str] = []
+        try:
+            from hermes_cli.web_server_chat import PTY_REGISTRY
+            alias_targets = PTY_REGISTRY.aliases_for(channel)
+        except Exception:
+            alias_targets = []
+        for alias in alias_targets:
+            for sub in event_channels.get(alias, ()):
+                if sub not in subs:
+                    subs.append(sub)
     for sub in subs:
         try:
             await sub.send_text(payload)
@@ -518,6 +536,14 @@ async def pty_ws(ws: WebSocket) -> None:
     except (PtyUnavailableError, FileNotFoundError, OSError, RegistryFull) as exc:
         await _pty_fail(ws, exc)
         return
+    # Pair the events channel with the attach token's PTY lifetime: the first
+    # channel to use a token is the child's publisher (sidecar URL is fixed at
+    # spawn); a reattach presenting a different channel (reload minted fresh
+    # while the token survived) is recorded as a subscriber alias so the old
+    # publisher's frames still reach the reattached tab. The alias lives on
+    # this session only — presenting this token proves ownership, and reaping
+    # the PTY drops it. Independent tokens never share a session.
+    session.note_pub_channel_or_alias(channel)
 
     # A fresh xterm can't rebuild the TUI from an arbitrary tail of alternate-
     # screen differential output; reused PTYs emit a full frame after replay.
