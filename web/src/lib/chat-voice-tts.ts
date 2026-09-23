@@ -1,4 +1,4 @@
-﻿import { authedFetch } from "@/lib/api";
+import { authedFetch } from "@/lib/api";
 import {
   chooseOpenRouterTts,
   type TtsEngine,
@@ -13,6 +13,10 @@ import { sanitizeTextForSpeech } from "@/lib/speechUtils";
  * The fast browser voice (`speakWithNabra`) stays the default engine and the
  * fallback whenever this path fails — a TTS outage must never drop a spoken
  * reply, only degrade it.
+ *
+ * The prefetch pipeline overlaps synthesis with playback: while sentence N
+ * is playing, sentences N+1..N+MAX_PREFETCH are already being fetched from
+ * the backend, eliminating the inter-sentence gap that causes stuttering.
  */
 
 let activeAudio: HTMLAudioElement | null = null;
@@ -55,11 +59,10 @@ export function playAudioDataUrl(dataUrl: string): Promise<boolean> {
       return;
     }
     let settled = false;
-    let wedgeGuard: ReturnType<typeof setTimeout> | undefined;
     const done = (played: boolean) => {
       if (settled) return;
       settled = true;
-      if (wedgeGuard !== undefined) clearTimeout(wedgeGuard);
+      clearTimeout(wedgeGuard);
       if (activeAudio === audio) {
         activeAudio = null;
         activeSettle = null;
@@ -70,6 +73,14 @@ export function playAudioDataUrl(dataUrl: string): Promise<boolean> {
     activeSettle = done;
     audio.onended = () => done(true);
     audio.onerror = () => done(false);
+
+    // Playback that neither ends nor errors must not wedge the speech queue.
+    // Audio that started producing sound counts as delivered (falling back
+    // would duplicate it); audio that never made a sound counts as failure.
+    const wedgeGuard = setTimeout(() => {
+      done(!audio.paused && audio.currentTime > 0);
+    }, 120_000);
+
     try {
       const playing = audio.play();
       if (playing && typeof playing.catch === "function") {
@@ -79,12 +90,6 @@ export function playAudioDataUrl(dataUrl: string): Promise<boolean> {
       done(false);
       return;
     }
-    // Playback that neither ends nor errors must not wedge the speech queue.
-    // Audio that started producing sound counts as delivered (falling back
-    // would duplicate it); audio that never made a sound counts as failure.
-    wedgeGuard = setTimeout(() => {
-      done(!audio.paused && audio.currentTime > 0);
-    }, 120_000);
   });
 }
 
@@ -139,5 +144,149 @@ export async function speakViaOpenRouter(
   // the browser voice instead of silently dropping the spoken sentence.
   return { spoke: played, fallbackToFish: fetched.fallbackToFish };
 }
+
+// ---------------------------------------------------------------------------
+// Prefetch pipeline: overlap synthesis with playback to eliminate gaps
+// ---------------------------------------------------------------------------
+
+/** Result of a prefetched sentence ready for playback. */
+export interface PrefetchedSentence {
+  text: string;
+  fetched: Promise<{ dataUrl: string; fallbackToFish: boolean } | null>;
+}
+
+/**
+ * Maximum number of sentences to prefetch ahead of the currently playing one.
+ * Mirrors the Python backend's `_StreamerPlayback` semaphore (3 in flight).
+ */
+const MAX_PREFETCH = 3;
+
+/**
+ * Merge consecutive short sentences to reduce the number of network
+ * round-trips for OpenRouter TTS. Browser SpeechSynthesis is instant
+ * (<50ms) so small chunks help latency, but network TTS pays ~500ms-2s
+ * per request — fewer, larger chunks eliminate gaps.
+ *
+ * Sentences shorter than `threshold` are merged with the next sentence
+ * until the merged result exceeds `threshold` or the queue runs out.
+ */
+export function mergeSentencesForNetworkTts(
+  sentences: string[],
+  threshold = 80,
+): string[] {
+  if (sentences.length <= 1) return [...sentences];
+  const merged: string[] = [];
+  let buffer = "";
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (!trimmed) continue;
+    if (!buffer) {
+      buffer = trimmed;
+    } else {
+      buffer = buffer + " " + trimmed;
+    }
+    if (buffer.length >= threshold) {
+      merged.push(buffer);
+      buffer = "";
+    }
+  }
+  if (buffer) merged.push(buffer);
+  return merged;
+}
+
+/**
+ * Prefetching speech pipeline for OpenRouter TTS. Eliminates inter-sentence
+ * pauses by starting HTTP synthesis requests for upcoming sentences while
+ * the current one is still playing.
+ *
+ * Usage: create a pipeline, enqueue sentences, then call `playNext()` in a
+ * loop. Each call plays one sentence whose audio was prefetched during the
+ * previous sentence's playback. Call `cancel()` on barge-in.
+ */
+export class TtsPrefetchPipeline {
+  private engine: "flux" | "fish";
+  private queue: PrefetchedSentence[] = [];
+  private cancelled = false;
+
+  constructor(engine: "flux" | "fish") {
+    this.engine = engine;
+  }
+
+  /** Add sentences to the pipeline, immediately starting prefetch for them. */
+  enqueue(sentences: string[]): void {
+    if (this.cancelled) return;
+    for (const text of sentences) {
+      if (!text.trim()) continue;
+      // Limit in-flight fetches: only prefetch if we're within the lookahead.
+      // Sentences beyond MAX_PREFETCH from the head will be fetched lazily
+      // as earlier ones are consumed (in playNext).
+      const inflight = this.queue.length;
+      if (inflight < MAX_PREFETCH) {
+        this.queue.push({ text, fetched: fetchOpenRouterSpeakUrl(text, this.engine) });
+      } else {
+        this.queue.push({ text, fetched: _DEFERRED_SENTINEL });
+      }
+    }
+  }
+
+  /** True when there are sentences remaining to play. */
+  hasNext(): boolean {
+    return !this.cancelled && this.queue.length > 0;
+  }
+
+  /**
+   * Play the next sentence. Returns the sentence text alongside the
+   * playback result so the caller can fall back to a different engine
+   * for sentences that failed synthesis.
+   */
+  async playNext(): Promise<{ text: string; spoke: boolean; fallbackToFish: boolean }> {
+    if (this.cancelled || this.queue.length === 0) {
+      return { text: "", spoke: false, fallbackToFish: false };
+    }
+    const entry = this.queue.shift()!;
+    // Kick off deferred prefetches now that a slot opened.
+    this._ensurePrefetch();
+
+    const fetched = await entry.fetched;
+    if (this.cancelled) return { text: entry.text, spoke: false, fallbackToFish: false };
+    if (!fetched) return { text: entry.text, spoke: false, fallbackToFish: false };
+
+    const played = await playAudioDataUrl(fetched.dataUrl);
+    if (this.cancelled) return { text: entry.text, spoke: false, fallbackToFish: false };
+    return { text: entry.text, spoke: played, fallbackToFish: fetched.fallbackToFish };
+  }
+
+  /** Return remaining queued sentence texts and clear the queue. */
+  drainTexts(): string[] {
+    const texts = this.queue.map((e) => e.text);
+    this.queue = [];
+    return texts;
+  }
+
+  /** Cancel all pending fetches (barge-in / mute / new message). */
+  cancel(): void {
+    this.cancelled = true;
+    this.queue = [];
+  }
+
+  /**
+   * Ensure the first MAX_PREFETCH entries in the queue have active fetches.
+   * Called after consuming a sentence in playNext to fill the lookahead.
+   */
+  private _ensurePrefetch(): void {
+    if (this.cancelled) return;
+    for (let i = 0; i < this.queue.length && i < MAX_PREFETCH; i++) {
+      if (this.queue[i].fetched === _DEFERRED_SENTINEL) {
+        this.queue[i] = {
+          text: this.queue[i].text,
+          fetched: fetchOpenRouterSpeakUrl(this.queue[i].text, this.engine),
+        };
+      }
+    }
+  }
+}
+
+/** Sentinel promise for entries whose fetch is deferred beyond MAX_PREFETCH. */
+const _DEFERRED_SENTINEL: Promise<null> = Promise.resolve(null);
 
 export type { TtsEngine };

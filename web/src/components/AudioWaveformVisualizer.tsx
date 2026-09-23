@@ -105,8 +105,8 @@ export const AudioWaveformVisualizer: React.FC<AudioWaveformVisualizerProps> = (
 
         ctx.fillStyle = gradient;
         ctx.beginPath();
-        if (typeof (ctx as any).roundRect === 'function') {
-          (ctx as any).roundRect(x, y, barWidth, barHeight, 2);
+        if ('roundRect' in ctx && typeof (ctx as unknown as { roundRect?: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect === 'function') {
+          (ctx as unknown as { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect(x, y, barWidth, barHeight, 2);
         } else {
           ctx.rect(x, y, barWidth, barHeight);
         }

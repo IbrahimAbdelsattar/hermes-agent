@@ -74,11 +74,10 @@ const speakWithBrowserVoice = (
       return;
     }
     let settled = false;
-    let wedgeGuard: ReturnType<typeof setTimeout> | undefined;
     const finish = (outcome: BrowserSpeechOutcome) => {
       if (settled) return;
       settled = true;
-      if (wedgeGuard !== undefined) clearTimeout(wedgeGuard);
+      clearTimeout(wedgeGuard);
       resolve(outcome);
     };
     const utter = new SpeechSynthesisUtterance(clean);
@@ -94,14 +93,16 @@ const speakWithBrowserVoice = (
     if (window.speechSynthesis.paused) {
       try {
         window.speechSynthesis.resume();
-      } catch {}
+      } catch {
+        // speech synthesis resume can fail silently in background tabs
+      }
     }
-    window.speechSynthesis.speak(utter);
     // Wedge guard: an engine that never fires onend/onerror must not hang the
     // speech queue. Still speaking counts as delivered; silence as failure.
-    wedgeGuard = setTimeout(() => {
+    const wedgeGuard = setTimeout(() => {
       finish(window.speechSynthesis.speaking || window.speechSynthesis.pending ? "ended" : "failed");
     }, timeoutMs);
+    window.speechSynthesis.speak(utter);
   });
 };
 
@@ -190,6 +191,8 @@ export const speakWithNabra = async (
         ? pickArabicVoice(voices, persona)
         : pickEnglishVoice(voices, persona);
       await speakWithBrowserVoice(clean, isAr, voice, 20000);
-    } catch {}
+    } catch {
+      // browser speech fallback failed
+    }
   }
 };

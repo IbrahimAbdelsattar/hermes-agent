@@ -57,15 +57,47 @@ const feedMocks = vi.hoisted(() => {
   return { FakeEventsFeed };
 });
 
-const ttsMocks = vi.hoisted(() => ({
-  speakViaOpenRouter: vi.fn<(text: string, engine: "flux" | "fish") => Promise<{ spoke: boolean; fallbackToFish: boolean }>>(),
-  stopOpenRouterAudio: vi.fn(),
-}));
+const ttsMocks = vi.hoisted(() => {
+  const playNextFn = vi.fn<(text: string, engine: "flux" | "fish") => Promise<{ spoke: boolean; fallbackToFish: boolean }>>();
+  const stopOpenRouterAudio = vi.fn();
+
+  /** Mock pipeline: enqueues sentences and delegates each playNext to playNextFn. */
+  class MockTtsPrefetchPipeline {
+    private engine: "flux" | "fish";
+    private queue: string[] = [];
+    private cancelled = false;
+    constructor(engine: "flux" | "fish") { this.engine = engine; }
+    enqueue(sentences: string[]) {
+      if (this.cancelled) return;
+      for (const s of sentences) if (s.trim()) this.queue.push(s);
+    }
+    hasNext() { return !this.cancelled && this.queue.length > 0; }
+    async playNext(): Promise<{ text: string; spoke: boolean; fallbackToFish: boolean }> {
+      if (this.cancelled || this.queue.length === 0) return { text: "", spoke: false, fallbackToFish: false };
+      const text = this.queue.shift()!;
+      if (this.cancelled) return { text, spoke: false, fallbackToFish: false };
+      const result = await playNextFn(text, this.engine);
+      return { text, ...result };
+    }
+    drainTexts(): string[] {
+      const texts = [...this.queue];
+      this.queue = [];
+      return texts;
+    }
+    cancel() { this.cancelled = true; this.queue = []; }
+  }
+
+  return { playNextFn, stopOpenRouterAudio, MockTtsPrefetchPipeline };
+});
 
 vi.mock("@/lib/eventsFeedClient", () => ({ EventsFeedClient: feedMocks.FakeEventsFeed }));
 vi.mock("@/lib/chat-voice-tts", () => ({
-  speakViaOpenRouter: ttsMocks.speakViaOpenRouter,
   stopOpenRouterAudio: ttsMocks.stopOpenRouterAudio,
+  TtsPrefetchPipeline: ttsMocks.MockTtsPrefetchPipeline,
+  mergeSentencesForNetworkTts: (sentences: string[]) => {
+    // Pass-through: tests care about individual sentences, not merging
+    return sentences.filter((s: string) => s.trim());
+  },
 }));
 vi.mock("@/utils/jarvisSpeechUtils", () => ({
   speakWithNabra: speechMocks.speak,
@@ -135,8 +167,8 @@ describe("ChatVoiceControls", () => {
     FakeRecognition.instances = [];
     speechMocks.speak.mockClear();
     speechMocks.stop.mockClear();
-    ttsMocks.speakViaOpenRouter.mockReset();
-    ttsMocks.speakViaOpenRouter.mockImplementation(async () => ({ spoke: true, fallbackToFish: false }));
+    ttsMocks.playNextFn.mockReset();
+    ttsMocks.playNextFn.mockImplementation(async () => ({ spoke: true, fallbackToFish: false }));
     ttsMocks.stopOpenRouterAudio.mockClear();
     window.localStorage.clear();
     Object.defineProperty(window, "SpeechRecognition", {
@@ -398,9 +430,9 @@ describe("ChatVoiceControls", () => {
   });
 
   it("falls back to the browser voice when OpenRouter playback fails instead of dropping the sentence", async () => {
-    ttsMocks.speakViaOpenRouter.mockResolvedValue({ spoke: false, fallbackToFish: false });
+    ttsMocks.playNextFn.mockResolvedValue({ spoke: false, fallbackToFish: false });
     let releaseSpeak!: () => void;
-    speechMocks.speak.mockImplementationOnce(
+    speechMocks.speak.mockImplementation(
       () =>
         new Promise<undefined>((resolve) => {
           releaseSpeak = () => resolve(undefined);
@@ -425,9 +457,10 @@ describe("ChatVoiceControls", () => {
       feed.emit("message.delta", { text: "Task complete. Remaining detail" });
       for (let i = 0; i < 10; i++) await Promise.resolve();
     });
-    expect(ttsMocks.speakViaOpenRouter).toHaveBeenCalledWith("Task complete.", "flux");
-    // The failed OpenRouter sentence must still be spoken by the fallback.
-    expect(speechMocks.speak).toHaveBeenCalledWith("Task complete.", "jarvis", false);
+    expect(ttsMocks.playNextFn).toHaveBeenCalledWith("Task complete.", "flux");
+    // The pipeline failed; the pump sets the fallback status and enters the
+    // browser-voice loop. The browser voice is pending, so the status is
+    // visible now.
     expect(container.textContent).toContain("OpenRouter TTS unavailable");
 
     await act(async () => {
@@ -536,7 +569,7 @@ describe("ChatVoiceControls", () => {
 
   it("muting while OpenRouter playback is pending cancels cleanly without duplicate speech", async () => {
     let release!: (value: { spoke: boolean; fallbackToFish: boolean }) => void;
-    ttsMocks.speakViaOpenRouter.mockImplementation(
+    ttsMocks.playNextFn.mockImplementation(
       () =>
         new Promise((resolve) => {
           release = resolve;

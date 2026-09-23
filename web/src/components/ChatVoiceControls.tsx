@@ -34,7 +34,7 @@ import {
   type VoiceLanguageMode,
   type VoiceRecognitionEvent,
 } from "@/lib/chat-voice";
-import { speakViaOpenRouter, stopOpenRouterAudio } from "@/lib/chat-voice-tts";
+import { mergeSentencesForNetworkTts, stopOpenRouterAudio, TtsPrefetchPipeline } from "@/lib/chat-voice-tts";
 import { transcribeAudioBlob } from "@/lib/server-transcribe";
 import { speakWithNabra, stopNabraAudio } from "@/utils/jarvisSpeechUtils";
 import { JarvisUltronVoiceOrb } from "./JarvisUltronVoiceOrb";
@@ -230,6 +230,7 @@ export function ChatVoiceControls({
   const speechQueueRef = useRef<string[]>([]);
   const speakingRef = useRef(false);
   const speechGenerationRef = useRef(0);
+  const prefetchPipelineRef = useRef<TtsPrefetchPipeline | null>(null);
   const mountedRef = useRef(true);
   const startListeningRef = useRef<() => void>(() => undefined);
 
@@ -489,6 +490,54 @@ export function ChatVoiceControls({
     const generation = speechGenerationRef.current;
     stopRecognition();
     setStatus("Hermes speaking");
+
+    const engine = ttsEngineRef.current;
+    const useNetwork = engine !== "browser";
+
+    // For network TTS: merge short sentences and prefetch audio in parallel
+    // so the next sentence's audio is already downloaded when the current
+    // one finishes playing — eliminating the inter-sentence gap.
+    if (useNetwork) {
+      const raw = speechQueueRef.current.splice(0);
+      const merged = mergeSentencesForNetworkTts(raw);
+      const pipeline = new TtsPrefetchPipeline(engine);
+      prefetchPipelineRef.current = pipeline;
+      pipeline.enqueue(merged);
+
+      while (
+        mountedRef.current &&
+        speechEnabledRef.current &&
+        generation === speechGenerationRef.current &&
+        pipeline.hasNext()
+      ) {
+        // Drain newly arrived sentences into the pipeline as they stream in.
+        if (speechQueueRef.current.length > 0) {
+          const fresh = speechQueueRef.current.splice(0);
+          const freshMerged = mergeSentencesForNetworkTts(fresh);
+          pipeline.enqueue(freshMerged);
+        }
+        const result = await pipeline.playNext();
+        if (generation !== speechGenerationRef.current) break;
+        if (result.fallbackToFish) {
+          setStatus("Flux is English-only — used Fish for Arabic");
+        }
+        // Prefetch failed for this sentence: fall back to browser voice.
+        // A cancellation during the await must not double-speak.
+        if (!result.spoke && generation === speechGenerationRef.current) {
+          setStatus("OpenRouter TTS unavailable — using the browser voice");
+          // Recover the failed sentence and any remaining pipeline entries
+          // so the browser-voice loop below can speak them.
+          const remaining = pipeline.drainTexts();
+          if (result.text) speechQueueRef.current.unshift(result.text);
+          speechQueueRef.current.push(...remaining);
+          pipeline.cancel();
+          break;
+        }
+      }
+      prefetchPipelineRef.current = null;
+    }
+
+    // Browser voice path (also serves as fallback when OpenRouter fails).
     while (
       mountedRef.current &&
       speechEnabledRef.current &&
@@ -496,24 +545,9 @@ export function ChatVoiceControls({
     ) {
       const next = speechQueueRef.current.shift();
       if (!next) break;
-      const engine = ttsEngineRef.current;
-      let spoke = false;
-      if (engine !== "browser") {
-        const result = await speakViaOpenRouter(next, engine);
-        spoke = result.spoke;
-        if (result.fallbackToFish) {
-          setStatus("Flux is English-only — used Fish for Arabic");
-        }
-      }
-      // A cancellation (mute / new message) during the await must not
-      // double-speak through the fallback voice.
-      if (!spoke && generation === speechGenerationRef.current) {
-        if (engine !== "browser") {
-          setStatus("OpenRouter TTS unavailable — using the browser voice");
-        }
-        await speakWithNabra(next, "jarvis", false);
-      }
+      await speakWithNabra(next, "jarvis", false);
     }
+
     if (generation !== speechGenerationRef.current) return;
     speakingRef.current = false;
     setIsAssistantSpeaking(false);
@@ -885,6 +919,10 @@ export function ChatVoiceControls({
       speechQueueRef.current = [];
       speakingRef.current = false;
       setIsAssistantSpeaking(false);
+      if (prefetchPipelineRef.current) {
+        prefetchPipelineRef.current.cancel();
+        prefetchPipelineRef.current = null;
+      }
       stopNabraAudio();
       stopOpenRouterAudio();
       setStatus("Spoken replies off");
@@ -970,6 +1008,10 @@ export function ChatVoiceControls({
       speechQueueRef.current = [];
       speakingRef.current = false;
       setIsAssistantSpeaking(false);
+      if (prefetchPipelineRef.current) {
+        prefetchPipelineRef.current.cancel();
+        prefetchPipelineRef.current = null;
+      }
       stopRecognition();
       stopNabraAudio();
       stopOpenRouterAudio();

@@ -69,7 +69,7 @@ export const sanitizeTextForSpeech = (text: string): string => {
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/--+/g, ', ')
-    .replace(/[\*\#]+/g, '')
+    .replace(/[*#]+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 };
@@ -119,7 +119,9 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const updated = window.speechSynthesis.getVoices();
       if (updated.length > 0) cachedVoices = updated;
     });
-  } catch {}
+  } catch {
+    // speech synthesis unavailable in environment
+  }
 }
 
 export const pickArabicVoice = (
@@ -324,7 +326,7 @@ export const splitTextIntoSentences = (text: string): string[] => {
  */
 export const cleanSpokenText = (text: string): string => {
   if (!text) return '';
-  let clean = text.replace(/<think[\s\S]*?<\/think>/gi, '');
+  const clean = text.replace(/<think[\s\S]*?<\/think>/gi, '');
   return clean.replace(/<think[\s\S]*/gi, '');
 };
 

@@ -77,7 +77,6 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
   isUserSpeaking = false,
   isMuted = false,
   selectedPersona = 'jarvis',
-  accentColor: _accentColor,
   themeMode: controlledTheme,
   onThemeChange,
   className = '',
@@ -356,8 +355,8 @@ export const JarvisUltronVoiceOrb: React.FC<JarvisUltronVoiceOrbProps> = ({
 
       // Frequency Audio Analysis
       const targetAnalyser = isSpeaking ? outputAnalyser || analyser : analyser;
-      let rawFreq = new Uint8Array(64);
-      let rawTime = new Uint8Array(64);
+      const rawFreq = new Uint8Array(64);
+      const rawTime = new Uint8Array(64);
       let realAudioDetected = false;
 
       if (targetAnalyser) {

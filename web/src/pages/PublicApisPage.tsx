@@ -48,6 +48,7 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
 import { Toast } from "@nous-research/ui/ui/components/toast";
 import { cn } from "@/lib/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 export interface PublicApiItem {
   name: string;
@@ -143,7 +144,7 @@ export default function PublicApisPage() {
   const { toast, showToast } = useToast();
 
   // Navigation mode
-  const [activeTab, setActiveTab] = useState<MainTab>("briefing");
+  const [activeTab, setActiveTab] = useState<MainTab>("catalog");
 
   // Briefing state
   const [briefing, setBriefing] = useState<BriefingData | null>(null);
@@ -334,7 +335,7 @@ export default function PublicApisPage() {
 
   // Copy URL
   const handleCopyUrl = (url: string) => {
-    void navigator.clipboard.writeText(url);
+    void copyTextToClipboard(url);
     setCopiedUrl(url);
     setTimeout(() => setCopiedUrl(null), 2000);
   };
@@ -468,11 +469,11 @@ export default function PublicApisPage() {
               <Globe className="size-5" />
             </div>
             <h1 className="text-xl font-bold font-mono tracking-wide text-[#00f0ff] flex items-center gap-2">
-              Public APIs & Intelligence Hub
+              Public APIs Hub & Explorer
             </h1>
             <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-mono flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
               <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              LIVE FEEDS ONLINE
+              1,890+ LIVE APIS &bull; LIVE FEEDS ONLINE
             </span>
           </div>
           <p className="text-xs text-[#80f7ff]/75 font-mono max-w-3xl leading-relaxed">
@@ -1004,7 +1005,7 @@ export default function PublicApisPage() {
                       size="sm"
                       outlined
                       onClick={() => {
-                        void navigator.clipboard.writeText(summaryText);
+                        void copyTextToClipboard(summaryText);
                         showToast("Copied executive brief to clipboard", "success");
                       }}
                       className="border-[#00f0ff]/40 text-[#00f0ff] hover:bg-[#00f0ff]/20 font-mono text-xs flex items-center gap-1.5"
