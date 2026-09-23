@@ -119,4 +119,58 @@ describe("jarvisJevClient", () => {
       method: "POST",
     }));
   });
+
+  it("classifies browser tab commands in English and Arabic", async () => {
+    const { classifyJevFastPath } = await import("./jarvisJevClient");
+    const d1 = classifyJevFastPath("open a new tab", false);
+    expect(d1).not.toBeNull();
+    expect(d1?.route).toBe("browser");
+    expect(d1?.action).toBe("open_tab");
+    expect(d1?.bypass_llm).toBe(true);
+
+    const d2 = classifyJevFastPath("افتح تابة جديدة", true);
+    expect(d2).not.toBeNull();
+    expect(d2?.route).toBe("browser");
+    expect(d2?.action).toBe("open_tab");
+
+    const d3 = classifyJevFastPath("open youtube", false);
+    expect(d3).not.toBeNull();
+    expect(d3?.route).toBe("browser");
+    expect(d3?.target).toBe("youtube");
+
+    const d4 = classifyJevFastPath("اقفل التابة", true);
+    expect(d4).not.toBeNull();
+    expect(d4?.route).toBe("browser");
+    expect(d4?.action).toBe("close_tab");
+  });
+
+  it("executes fast-path tab opening via window.open", async () => {
+    const originalOpen = window.open;
+    const mockOpen = vi.fn();
+    window.open = mockOpen;
+
+    try {
+      const decision: JevRouteDecision = {
+        route: "browser",
+        action: "open_tab",
+        target: "youtube",
+        confidence: 0.96,
+        latency_ms: 1,
+        provider: "fallback",
+        spoken_confirmation: "Opening youtube now, Sir.",
+        bypass_llm: true,
+      };
+
+      const res = await executeJevFastPath(decision);
+      expect(res.handled).toBe(true);
+      expect(mockOpen).toHaveBeenCalledWith(
+        "https://www.youtube.com",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    } finally {
+      window.open = originalOpen;
+    }
+  });
 });
+

@@ -42,8 +42,8 @@ class JevRouteRequest(BaseModel):
 
 
 class JevRouteDecision(BaseModel):
-    route: str = Field(..., description="Classified route: music | telemetry | task | standby | llm")
-    action: Optional[str] = Field(None, description="Specific action: play | pause | resume | next | prev | weather | exchange | crypto | gold | iss | sleep | query")
+    route: str = Field(..., description="Classified route: music | telemetry | task | standby | browser | computer | llm")
+    action: Optional[str] = Field(None, description="Specific action: play | pause | resume | next | prev | open_tab | close_tab | screenshot | weather | exchange | crypto | gold | iss | sleep | query")
     target: Optional[str] = Field(None, description="Extracted parameter such as track name, city, or coin symbol")
     confidence: float = Field(..., description="Calibrated confidence score between 0.0 and 1.0")
     latency_ms: float = Field(..., description="End-to-end routing latency in milliseconds")
@@ -136,6 +136,30 @@ _TELEMETRY_ISS_PATTERNS = [
     re.compile(r"(?:محطة\s*الفضاء\s*الدولية|مكان\s*المحطة\s*الفضائية)", re.I),
 ]
 
+_BROWSER_TAB_OPEN_PATTERNS = [
+    re.compile(r"^(?:open|launch|create)\s+(?:a\s+)?(?:new\s+)?tab(?:\s+(?:for|to|with)\s+(.+))?$", re.I),
+    re.compile(r"^(?:new\s+tab)(?:\s+(?:for|to|with)\s+(.+))?$", re.I),
+    re.compile(r"\b(?:open\s+(?:a\s+)?(?:new\s+)?(?:browser\s+)?tab)\b", re.I),
+    re.compile(r"^(?:open|launch|go\s+to|visit)\s+(?:https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s]*)?)$", re.I),
+    re.compile(r"^(?:open|launch)\s+(google|youtube|github|twitter|x|reddit|facebook|instagram|linkedin|chatgpt|claude|gmail)(?:\s+(?:in\s+a\s+new\s+tab|tab))?$", re.I),
+    re.compile(r"^(?:افتح|افتحلي|افتحلنا|هات)\s+(?:تابة|تاب|صفحة|موقع)\s*(?:جديدة|جديد)?(?:\s+(.+))?$", re.I),
+    re.compile(r"^(?:تابة|تاب)\s+جديدة(?:\s+(.+))?$", re.I),
+    re.compile(r"^(?:افتح|ادخل\s+على|روح\s+على)\s+(?:موقع\s+)?(جوجل|يوتيوب|فيسبوك|تويتر|جيتهاب|لينكدإن|شات\s*جي\s*بي\s*تي|جيميل)(?:\s+(?:في\s+تابة\s+جديدة|في\s+تاب))?$", re.I),
+    re.compile(r"^(?:افتح|ادخل\s+على)\s+(https?:\/\/\S+|[a-z0-9.-]+\.[a-z]{2,}\S*)$", re.I),
+    re.compile(r"^(?:ابحث\s+عن|دور\s+على|سيرش\s+على)\s+(.+)\s+(?:في\s+تابة|في\s+تاب|في\s+المتصفح)$", re.I),
+]
+
+_BROWSER_TAB_CLOSE_PATTERNS = [
+    re.compile(r"^(?:close|shut)\s*(?:the\s*)?(?:current\s*)?tab$", re.I),
+    re.compile(r"\b(?:close\s+tab|close\s+this\s+tab)\b", re.I),
+    re.compile(r"^(?:اقفل|اقفلي|قفل)\s*(?:التابة|التاب|الصفحة)(?:\s+دي)?$", re.I),
+]
+
+_COMPUTER_SCREENSHOT_PATTERNS = [
+    re.compile(r"\b(?:take\s*(?:a\s*)?screenshot|capture\s*(?:the\s*)?(?:desktop|screen)|desktop\s*screenshot|screen\s*grab)\b", re.I),
+    re.compile(r"^(?:خد|خدي|اعمل|أخد)\s*(?:سكرين\s*شوت|لقطة\s*شاشة|صورة\s*للشاشة)$", re.I),
+]
+
 
 def _clean_input(raw: str) -> str:
     t = raw.strip()
@@ -162,7 +186,27 @@ def _heuristic_classify(text: str, is_arabic: bool) -> Tuple[str, Optional[str],
             spoken = "تصبح على خير، وضعت النظام في وضع الاستعداد." if is_arabic else "Entering standby mode now, Sir."
             return ("standby", "sleep", None, 0.98, spoken, True)
 
-    # 2. Music Controls
+    # 2. Browser Tab & Navigation Controls
+    for p in _BROWSER_TAB_CLOSE_PATTERNS:
+        if p.search(cleaned):
+            spoken = "تم إغلاق التابة." if is_arabic else "Closed current tab, Sir."
+            return ("browser", "close_tab", None, 0.96, spoken, True)
+
+    for p in _BROWSER_TAB_OPEN_PATTERNS:
+        m = p.search(cleaned)
+        if m:
+            raw_target = (m.group(1).strip() if m.lastindex and m.group(1) else "")
+            target = re.sub(r"^(?:for|to|with|موقع|site|website)\s+", "", raw_target, flags=re.I).strip() or None
+            spoken = f"فتحتلك {target or 'تابة جديدة'} حالا." if is_arabic else f"Opening {target or 'a new tab'} now, Sir."
+            return ("browser", "open_tab", target, 0.96, spoken, True)
+
+    # 3. Computer & Desktop Actions
+    for p in _COMPUTER_SCREENSHOT_PATTERNS:
+        if p.search(cleaned):
+            spoken = "تم أخذ لقطة شاشة لسطح المكتب." if is_arabic else "Capturing desktop screenshot now, Sir."
+            return ("computer", "screenshot", None, 0.96, spoken, True)
+
+    # 4. Music Controls
     for p in _MUSIC_PAUSE_PATTERNS:
         if p.search(cleaned):
             spoken = "تم إيقاف تشغيل الموسيقى." if is_arabic else "Music paused, Sir."
@@ -187,7 +231,7 @@ def _heuristic_classify(text: str, is_arabic: bool) -> Tuple[str, Optional[str],
             spoken = f"شغلتلك {query} حالا." if is_arabic else f"Playing {query} right away, Sir."
             return ("music", "play", query, 0.94, spoken, True)
 
-    # 3. Live Telemetry Feeds
+    # 5. Live Telemetry Feeds
     for p in _TELEMETRY_WEATHER_PATTERNS:
         if p.search(cleaned):
             spoken = "جاري استدعاء تقرير الطقس المباشر." if is_arabic else "Fetching current weather telemetry now."
@@ -226,6 +270,8 @@ def _build_jev_payload(text: str, is_arabic: bool, model: str) -> Dict[str, Any]
     state = (
         f"User query in Jarvis voice interface (language mode: {'Egyptian Arabic' if is_arabic else 'English'}): \"{text}\"\n"
         "Determine the user's intent. Routes:\n"
+        "- browser: open, close, navigate, or create browser tabs and websites\n"
+        "- computer: desktop automation, taking screenshots, or desktop control\n"
         "- music: play, pause, resume, skip audio/songs or YouTube music\n"
         "- telemetry: real-time status of weather, currency exchange, cryptocurrency, gold, or ISS space station\n"
         "- standby: sleep, power down, or standby voice mode\n"
@@ -234,6 +280,20 @@ def _build_jev_payload(text: str, is_arabic: bool, model: str) -> Dict[str, Any]
     )
 
     questions = {
+        "is_browser": {
+            "type": "noul",
+            "instructions": (
+                "The user utterance asks to open, close, navigate, or create a browser tab or website. "
+                "Examples: 'open a new tab', 'new tab for youtube', 'open google in a new tab', 'افتح تابة جديدة', 'اقفل التابة'."
+            ),
+        },
+        "is_computer": {
+            "type": "noul",
+            "instructions": (
+                "The user utterance asks for a computer automation or desktop action like taking a screenshot or capturing the screen. "
+                "Examples: 'take a screenshot', 'capture the desktop', 'خد سكرين شوت'."
+            ),
+        },
         "is_music": {
             "type": "noul",
             "instructions": (
@@ -322,16 +382,34 @@ async def evaluate_jev_intent(text: str, language: str = "arabic_egyptian") -> J
                     return float(ans["noul"])
                 return 0.0
 
+            b_score = get_score("is_browser")
+            c_score = get_score("is_computer")
             m_score = get_score("is_music")
             t_score = get_score("is_telemetry")
             s_score = get_score("is_standby")
             k_score = get_score("is_task")
 
-            top_score = max(m_score, t_score, s_score, k_score)
+            top_score = max(b_score, c_score, m_score, t_score, s_score, k_score)
             provider = "typesafe" if is_typesafe else "openrouter"
 
             if top_score >= 0.85:
-                if top_score == m_score:
+                if top_score == b_score:
+                    h_route, h_action, h_target, _, h_spoken, _ = _heuristic_classify(text, is_arabic)
+                    route = "browser"
+                    action = h_action or "open_tab"
+                    target = h_target
+                    confidence = b_score
+                    spoken_confirmation = h_spoken
+                    bypass_llm = True
+                elif top_score == c_score:
+                    h_route, h_action, h_target, _, h_spoken, _ = _heuristic_classify(text, is_arabic)
+                    route = "computer"
+                    action = h_action or "screenshot"
+                    target = h_target
+                    confidence = c_score
+                    spoken_confirmation = h_spoken
+                    bypass_llm = True
+                elif top_score == m_score:
                     # Parse specific music action and target
                     h_route, h_action, h_target, _, h_spoken, _ = _heuristic_classify(text, is_arabic)
                     route = "music"
@@ -359,6 +437,7 @@ async def evaluate_jev_intent(text: str, language: str = "arabic_egyptian") -> J
                     confidence = k_score
                     spoken_confirmation = "جاري تدوين المهمة في سجل المهام." if is_arabic else "Recording task in executive backlog."
                     bypass_llm = False  # Task mutations can benefit from LLM / tool pipeline
+
             else:
                 route = "llm"
                 action = "query"

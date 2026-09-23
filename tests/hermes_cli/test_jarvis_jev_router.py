@@ -172,3 +172,46 @@ def test_jarvis_jev_remote_provider_mock(client, monkeypatch):
         assert data["route"] == "music"
         assert data["confidence"] == 0.96
         assert data["bypass_llm"] is True
+
+
+def test_jarvis_jev_route_browser_tab_english(client):
+    payload = {"text": "open a new tab for youtube", "language": "english"}
+    r = client.post("/api/jarvis/jev-route", json=payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["route"] == "browser"
+    assert data["action"] == "open_tab"
+    assert data["target"] == "youtube"
+    assert data["bypass_llm"] is True
+
+
+def test_jarvis_jev_route_browser_tab_arabic(client):
+    payload = {"text": "افتح تابة جديدة لجوجل", "language": "arabic_egyptian"}
+    r = client.post("/api/jarvis/jev-route", json=payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["route"] == "browser"
+    assert data["action"] == "open_tab"
+    assert "جوجل" in (data["target"] or "")
+    assert data["bypass_llm"] is True
+
+
+def test_jarvis_jev_route_browser_tab_close(client):
+    for phrase in ["close current tab", "اقفل التابة دي"]:
+        r = client.post("/api/jarvis/jev-route", json={"text": phrase})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["route"] == "browser"
+        assert data["action"] == "close_tab"
+        assert data["bypass_llm"] is True
+
+
+def test_jarvis_jev_route_computer_screenshot(client):
+    for phrase in ["take a screenshot", "خد سكرين شوت"]:
+        r = client.post("/api/jarvis/jev-route", json={"text": phrase})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["route"] == "computer"
+        assert data["action"] == "screenshot"
+        assert data["bypass_llm"] is True
+
