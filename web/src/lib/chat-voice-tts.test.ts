@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authedFetch } from "@/lib/api";
 import { OPENROUTER_TTS_SPECS } from "./chat-voice";
-import { fetchOpenRouterSpeakUrl, speakViaOpenRouter, stopOpenRouterAudio } from "./chat-voice-tts";
+import { fetchOpenRouterSpeakUrl, speakViaOpenRouter, stopOpenRouterAudio, unlockOpenRouterAudioForGesture } from "./chat-voice-tts";
 
 vi.mock("@/lib/api", () => ({ authedFetch: vi.fn() }));
 const mockAuthedFetch = vi.mocked(authedFetch);
@@ -215,5 +215,26 @@ describe("speakViaOpenRouter playback outcomes", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("unlockOpenRouterAudioForGesture", () => {
+  beforeEach(() => {
+    FakeAudio.instances = [];
+    vi.stubGlobal("Audio", FakeAudio);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("primes a silent audio element in the gesture without hijacking the sentence player", () => {
+    unlockOpenRouterAudioForGesture();
+    const primer = FakeAudio.instances.at(-1);
+    expect(primer?.src.startsWith("data:audio")).toBe(true);
+    // play() was attempted synchronously (the gesture's transient activation).
+    expect(primer?.paused).toBe(false);
+    // The primer is not tracked as sentence audio: stopping stays a safe no-op.
+    expect(() => stopOpenRouterAudio()).not.toThrow();
   });
 });

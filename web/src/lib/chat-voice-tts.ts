@@ -24,6 +24,59 @@ let activeAudio: HTMLAudioElement | null = null;
 let activeSettle: ((played: boolean) => void) | null = null;
 
 /**
+ * Minimal silent WAV (44-byte header, zero samples): no audible output, but
+ * a real unmuted media-element load through the audio pipeline.
+ */
+const SILENT_WAV_DATA_URL =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAA";
+
+let sharedUnlockContext: AudioContext | null = null;
+
+/**
+ * Unlock OpenRouter (HTMLAudioElement) playback inside a user gesture.
+ *
+ * `primeSpeechForGesture` in ChatVoiceControls only primed SpeechSynthesis,
+ * so the first `<audio>` play — fired later from a network event outside any
+ * gesture — was rejected by the autoplay policy (`NotAllowedError`) while
+ * the browser voice worked fine. The Mic/Voice toggle IS a gesture: resume
+ * the shared AudioContext and run one silent unmuted primer through a real
+ * HTMLAudioElement here, so sticky activation covers later sentence playback.
+ * Must be called synchronously inside the click handler. Safe to call
+ * repeatedly; never touches the active sentence player.
+ */
+export function unlockOpenRouterAudioForGesture(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (Ctor) {
+      if (!sharedUnlockContext || sharedUnlockContext.state === "closed") {
+        sharedUnlockContext = new Ctor();
+      }
+      if (sharedUnlockContext.state === "suspended") {
+        void sharedUnlockContext.resume().catch(() => {});
+      }
+    }
+  } catch {
+    // AudioContext unlock is best-effort; the element primer below is the path that matters.
+  }
+  try {
+    if (typeof Audio === "undefined") return;
+    const primer = new Audio(SILENT_WAV_DATA_URL);
+    primer.muted = false;
+    primer.volume = 0;
+    primer.preload = "auto";
+    const playing = primer.play();
+    if (playing && typeof playing.catch === "function") {
+      playing.catch(() => {});
+    }
+  } catch {
+    // ignore — playback will fall back to the browser voice per sentence.
+  }
+}
+
+/**
  * Stop the current data-URL playback and settle its pending promise
  * immediately as "not played". Pause alone would leave the playback promise
  * dangling until the wedge timer, stalling the speech queue after a
@@ -72,6 +125,15 @@ export function playAudioDataUrl(dataUrl: string): Promise<boolean> {
     };
     activeAudio = audio;
     activeSettle = done;
+    // Explicit output state: the gesture unlock primer runs at volume 0, and
+    // a stale muted flag must never silence a real sentence.
+    try {
+      audio.preload = "auto";
+      audio.muted = false;
+      audio.volume = 1;
+    } catch {
+      // ignore — attribute assignment cannot fail playback.
+    }
     audio.onended = () => done(true);
     audio.onerror = () => done(false);
 

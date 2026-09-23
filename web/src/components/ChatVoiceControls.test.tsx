@@ -60,6 +60,7 @@ const feedMocks = vi.hoisted(() => {
 const ttsMocks = vi.hoisted(() => {
   const playNextFn = vi.fn<(text: string, engine: "flux" | "fish") => Promise<{ spoke: boolean; fallbackToFish: boolean }>>();
   const stopOpenRouterAudio = vi.fn();
+  const unlockOpenRouterAudioForGesture = vi.fn();
 
   /** Mock pipeline: enqueues sentences and delegates each playNext to playNextFn. */
   class MockTtsPrefetchPipeline {
@@ -87,12 +88,13 @@ const ttsMocks = vi.hoisted(() => {
     cancel() { this.cancelled = true; this.queue = []; }
   }
 
-  return { playNextFn, stopOpenRouterAudio, MockTtsPrefetchPipeline };
+  return { playNextFn, stopOpenRouterAudio, unlockOpenRouterAudioForGesture, MockTtsPrefetchPipeline };
 });
 
 vi.mock("@/lib/eventsFeedClient", () => ({ EventsFeedClient: feedMocks.FakeEventsFeed }));
 vi.mock("@/lib/chat-voice-tts", () => ({
   stopOpenRouterAudio: ttsMocks.stopOpenRouterAudio,
+  unlockOpenRouterAudioForGesture: ttsMocks.unlockOpenRouterAudioForGesture,
   TtsPrefetchPipeline: ttsMocks.MockTtsPrefetchPipeline,
   mergeSentencesForNetworkTts: (sentences: string[]) => {
     // Pass-through: tests care about individual sentences, not merging
@@ -170,6 +172,7 @@ describe("ChatVoiceControls", () => {
     ttsMocks.playNextFn.mockReset();
     ttsMocks.playNextFn.mockImplementation(async () => ({ spoke: true, fallbackToFish: false }));
     ttsMocks.stopOpenRouterAudio.mockClear();
+    ttsMocks.unlockOpenRouterAudioForGesture.mockClear();
     window.localStorage.clear();
     Object.defineProperty(window, "SpeechRecognition", {
       configurable: true,
@@ -427,6 +430,25 @@ describe("ChatVoiceControls", () => {
     expect(container.textContent).toContain("Voice on");
     await act(async () => button("Voice on").click());
     expect(window.localStorage.getItem("hermes_chat_speech_enabled")).toBe("off");
+  });
+
+  it("unlocks OpenRouter audio in the same gesture that enables Voice", async () => {
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={() => true}
+        />,
+      );
+    });
+    expect(ttsMocks.unlockOpenRouterAudioForGesture).not.toHaveBeenCalled();
+    // Enabling Voice is the autoplay gesture: the `<audio>` path must be
+    // primed here, not when the first sentence arrives from the network.
+    await act(async () => button("Voice off").click());
+    expect(ttsMocks.unlockOpenRouterAudioForGesture).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Voice on");
   });
 
   it("toggles voice persona between Male (Jarvis) and Female (Gwen) and persists to localStorage", async () => {

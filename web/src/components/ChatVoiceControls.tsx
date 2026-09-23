@@ -39,7 +39,7 @@ import {
   type VoicePersona,
   type VoiceRecognitionEvent,
 } from "@/lib/chat-voice";
-import { mergeSentencesForNetworkTts, stopOpenRouterAudio, TtsPrefetchPipeline } from "@/lib/chat-voice-tts";
+import { mergeSentencesForNetworkTts, stopOpenRouterAudio, TtsPrefetchPipeline, unlockOpenRouterAudioForGesture } from "@/lib/chat-voice-tts";
 import { transcribeAudioBlob } from "@/lib/server-transcribe";
 import { speakWithNabra, stopNabraAudio } from "@/utils/jarvisSpeechUtils";
 import {
@@ -843,12 +843,15 @@ export function ChatVoiceControls({
   /**
    * Browsers gate SpeechSynthesis and audio autoplay behind a user gesture.
    * The Mic/Voice toggle IS that gesture: prime the synthesis engine inside
-   * it (a muted, empty utterance) so the first spoken reply — which arrives
-   * later, from a network event outside any gesture — is not silently
-   * swallowed by the autoplay policy. Keyboard activation (Enter/Space)
-   * dispatches click too, so both input paths unlock speech.
+   * it (a muted, empty utterance) AND unlock the HTMLAudioElement path (a
+   * silent primer through a real `<audio>` element) so the first OpenRouter
+   * sentence — which arrives later, from a network event outside any gesture
+   * — is not rejected by the autoplay policy while the browser voice works.
+   * Keyboard activation (Enter/Space) dispatches click too, so both input
+   * paths unlock speech.
    */
   const primeSpeechForGesture = useCallback(() => {
+    unlockOpenRouterAudioForGesture();
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       if (window.speechSynthesis.speaking || window.speechSynthesis.pending) return;
@@ -933,7 +936,12 @@ export function ChatVoiceControls({
         // ignore
       }
     }
-    if (next !== "browser") stopOpenRouterAudio();
+    // Switching to a network voice is itself a user gesture: unlock the
+    // `<audio>` path now so the next reply can play without an extra toggle.
+    if (next !== "browser") {
+      unlockOpenRouterAudioForGesture();
+      stopOpenRouterAudio();
+    }
     setStatus(
       next === "browser"
         ? "Browser voice replies (fast)"
