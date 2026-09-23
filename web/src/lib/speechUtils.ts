@@ -152,10 +152,12 @@ export const pickArabicVoice = (
         v.lang.toLowerCase().includes('ar') &&
         !v.name.toLowerCase().includes('male') &&
         !v.name.toLowerCase().includes('shakir') &&
-        !v.name.toLowerCase().includes('tarik')
+        !v.name.toLowerCase().includes('tarik') &&
+        !v.name.toLowerCase().includes('maged') &&
+        !v.name.toLowerCase().includes('hamed')
     );
     if (anyArabicNonMale.length > 0) return anyArabicNonMale[0];
-    return voices.find((v) => v.lang.toLowerCase().includes('ar'));
+    return undefined;
   }
 
   // Jarvis: Male Arabic voices
@@ -187,7 +189,7 @@ export const pickArabicVoice = (
   });
 
   if (maleArabicVoices.length === 0) {
-    return voices.find((v) => v.lang.toLowerCase().includes('ar'));
+    return undefined;
   }
 
   const maleEg = maleArabicVoices.find(
@@ -245,7 +247,7 @@ export const pickEnglishVoice = (
         !v.name.toLowerCase().includes('george')
     );
     if (nonMale.length > 0) return nonMale[0];
-    return voices.find((v) => v.lang.toLowerCase().startsWith('en'));
+    return undefined;
   }
 
   // Jarvis: Male English voices
@@ -267,7 +269,7 @@ export const pickEnglishVoice = (
   });
 
   if (maleEnglishVoices.length === 0) {
-    return voices.find((v) => v.lang.toLowerCase().startsWith('en'));
+    return undefined;
   }
 
   // Jarvis British / sophisticated male voice

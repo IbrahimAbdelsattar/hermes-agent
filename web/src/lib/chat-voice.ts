@@ -185,8 +185,20 @@ export interface OpenRouterTtsSpec {
   voice_id: string;
 }
 
+export type VoicePersona = "jarvis" | "gwen";
+
+export const VOICE_PERSONA_STORAGE_KEY = "hermes_chat_voice_persona";
+
+export const VOICE_PERSONA_LABELS: Record<VoicePersona, string> = {
+  jarvis: "Male (Jarvis)",
+  gwen: "Female (Gwen)",
+};
+
+export const OPENROUTER_MALE_FLUX_VOICE = "flux-orion-en";
+export const OPENROUTER_FEMALE_FLUX_VOICE = "flux-alexis-en";
+
 export const OPENROUTER_TTS_SPECS: Record<"flux" | "fish", OpenRouterTtsSpec> = {
-  flux: { model_id: "deepgram/flux-tts:free", voice_id: "flux-alexis-en" },
+  flux: { model_id: "deepgram/flux-tts:free", voice_id: OPENROUTER_FEMALE_FLUX_VOICE },
   fish: {
     model_id: "fish-audio/s2.1-pro-free:free",
     voice_id: "b347db033a6549378b48d00acb0d06cd",
@@ -202,15 +214,24 @@ export interface OpenRouterTtsRoute extends OpenRouterTtsSpec {
  * Resolve which OpenRouter model/voice a spoken sentence must use. Arabic
  * text is never sent to Flux (English-only per the OpenRouter catalog); it
  * reroutes to the multilingual Fish model instead.
+ *
+ * For Flux, the voice is chosen to match the selected persona:
+ * - "jarvis" (Male) -> flux-orion-en
+ * - "gwen" (Female) -> flux-alexis-en
  */
 export function chooseOpenRouterTts(
   text: string,
   engine: "flux" | "fish",
+  persona: VoicePersona = "gwen",
 ): OpenRouterTtsRoute {
   if (engine === "flux" && (containsArabic(text) || detectDominantScript(text) === "ar")) {
     return { ...OPENROUTER_TTS_SPECS.fish, fallbackToFish: true };
   }
-  return { ...OPENROUTER_TTS_SPECS[engine], fallbackToFish: false };
+  const spec = { ...OPENROUTER_TTS_SPECS[engine] };
+  if (engine === "flux") {
+    spec.voice_id = persona === "jarvis" ? OPENROUTER_MALE_FLUX_VOICE : OPENROUTER_FEMALE_FLUX_VOICE;
+  }
+  return { ...spec, fallbackToFish: false };
 }
 
 export interface ServerTranscriptionResponse {

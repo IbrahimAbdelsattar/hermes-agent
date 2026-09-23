@@ -1,4 +1,4 @@
-﻿// @vitest-environment jsdom
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authedFetch } from "@/lib/api";
@@ -77,7 +77,28 @@ describe("fetchOpenRouterSpeakUrl", () => {
       text: "Hello there",
       provider: "openrouter",
       model_id: OPENROUTER_TTS_SPECS.flux.model_id,
+      voice_id: "flux-orion-en",
+      persona: "jarvis",
+    });
+  });
+
+  it("posts female Flux voice when Gwen persona is selected", async () => {
+    mockAuthedFetch.mockResolvedValue(
+      jsonResponse({ ok: true, data_url: "data:audio/mpeg;base64,AAA" }),
+    );
+    await expect(fetchOpenRouterSpeakUrl("Hello there", "flux", "gwen")).resolves.toEqual({
+      dataUrl: "data:audio/mpeg;base64,AAA",
+      fallbackToFish: false,
+    });
+
+    const [url, init] = mockAuthedFetch.mock.calls[0];
+    expect(url).toBe("/api/audio/speak");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      text: "Hello there",
+      provider: "openrouter",
+      model_id: OPENROUTER_TTS_SPECS.flux.model_id,
       voice_id: "flux-alexis-en",
+      persona: "gwen",
     });
   });
 

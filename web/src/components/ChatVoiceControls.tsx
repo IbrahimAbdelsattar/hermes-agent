@@ -6,6 +6,7 @@ import {
   MicOff,
   Minimize2,
   Send,
+  User,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -29,9 +30,12 @@ import {
   normalizeVoicePrompt,
   STT_MODE_LABELS,
   TTS_ENGINE_LABELS,
+  VOICE_PERSONA_LABELS,
+  VOICE_PERSONA_STORAGE_KEY,
   type SttMode,
   type TtsEngine,
   type VoiceLanguageMode,
+  type VoicePersona,
   type VoiceRecognitionEvent,
 } from "@/lib/chat-voice";
 import { mergeSentencesForNetworkTts, stopOpenRouterAudio, TtsPrefetchPipeline } from "@/lib/chat-voice-tts";
@@ -198,6 +202,25 @@ export function ChatVoiceControls({
     }
     return "browser";
   });
+
+  const [voicePersona, setVoicePersona] = useState<VoicePersona>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem(VOICE_PERSONA_STORAGE_KEY);
+        if (saved === "jarvis" || saved === "gwen") {
+          return saved;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "jarvis";
+  });
+
+  const voicePersonaRef = useRef<VoicePersona>(voicePersona);
+  useEffect(() => {
+    voicePersonaRef.current = voicePersona;
+  }, [voicePersona]);
 
   const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
@@ -492,6 +515,7 @@ export function ChatVoiceControls({
     setStatus("Hermes speaking");
 
     const engine = ttsEngineRef.current;
+    const persona = voicePersonaRef.current;
     const useNetwork = engine !== "browser";
 
     // For network TTS: merge short sentences and prefetch audio in parallel
@@ -500,7 +524,7 @@ export function ChatVoiceControls({
     if (useNetwork) {
       const raw = speechQueueRef.current.splice(0);
       const merged = mergeSentencesForNetworkTts(raw);
-      const pipeline = new TtsPrefetchPipeline(engine);
+      const pipeline = new TtsPrefetchPipeline(engine, persona);
       prefetchPipelineRef.current = pipeline;
       pipeline.enqueue(merged);
 
@@ -545,7 +569,7 @@ export function ChatVoiceControls({
     ) {
       const next = speechQueueRef.current.shift();
       if (!next) break;
-      await speakWithNabra(next, "jarvis", false);
+      await speakWithNabra(next, persona, false);
     }
 
     if (generation !== speechGenerationRef.current) return;
@@ -861,6 +885,20 @@ export function ChatVoiceControls({
     );
   }, []);
 
+  const toggleVoicePersona = useCallback(() => {
+    const next: VoicePersona = voicePersonaRef.current === "jarvis" ? "gwen" : "jarvis";
+    voicePersonaRef.current = next;
+    setVoicePersona(next);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(VOICE_PERSONA_STORAGE_KEY, next);
+      } catch {
+        // ignore
+      }
+    }
+    setStatus(`Voice persona: ${VOICE_PERSONA_LABELS[next]}`);
+  }, []);
+
   const toggleLanguage = useCallback(() => {
     const prev = languageModeRef.current;
     const next: VoiceLanguageMode =
@@ -1083,6 +1121,11 @@ export function ChatVoiceControls({
       : ttsEngine === "flux"
         ? "Replies: OpenRouter Flux TTS (deepgram/flux-tts:free, English-only; Arabic text is spoken with Fish) (click for Fish)"
         : "Replies: OpenRouter Fish TTS (fish-audio/s2.1-pro-free:free, multilingual) (click for the fast browser voice)";
+  const personaLabel = `Voice: ${voicePersona === "jarvis" ? "Male" : "Female"}`;
+  const personaTitle =
+    voicePersona === "jarvis"
+      ? "Voice persona: Male (Jarvis) (click to switch to Female / Gwen)"
+      : "Voice persona: Female (Gwen) (click to switch to Male / Jarvis)";
 
   return (
     <div className="mb-2 flex shrink-0 flex-col gap-1.5" style={{ color: foreground }}>
@@ -1112,7 +1155,8 @@ export function ChatVoiceControls({
 
           <div className="relative my-2 flex h-[190px] w-full items-center justify-center overflow-hidden">
             <JarvisUltronVoiceOrb
-              themeMode="hermes"
+              themeMode={voicePersona === "gwen" ? "gwen" : "hermes"}
+              selectedPersona={voicePersona}
               isActive={liveEnabled || speechEnabled}
               isSpeaking={isAssistantSpeaking}
               isUserSpeaking={listening && Boolean(draft)}
@@ -1172,6 +1216,17 @@ export function ChatVoiceControls({
             <Button
               ghost
               size="sm"
+              onClick={toggleVoicePersona}
+              title={personaTitle}
+              aria-label={`Voice persona: ${VOICE_PERSONA_LABELS[voicePersona]}`}
+              className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+            >
+              <User className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
+              <span>{personaLabel}</span>
+            </Button>
+            <Button
+              ghost
+              size="sm"
               onClick={toggleSpeech}
               aria-pressed={speechEnabled}
               title="Toggle spoken Hermes replies"
@@ -1210,7 +1265,8 @@ export function ChatVoiceControls({
           >
             <JarvisUltronVoiceOrb
               isMini
-              themeMode="hermes"
+              themeMode={voicePersona === "gwen" ? "gwen" : "hermes"}
+              selectedPersona={voicePersona}
               isActive={liveEnabled || speechEnabled}
               isSpeaking={isAssistantSpeaking}
               isUserSpeaking={listening && Boolean(draft)}
@@ -1265,6 +1321,17 @@ export function ChatVoiceControls({
             className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
           >
             <span>{ttsLabel}</span>
+          </Button>
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleVoicePersona}
+            title={personaTitle}
+            aria-label={`Voice persona: ${VOICE_PERSONA_LABELS[voicePersona]}`}
+            className="h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px]"
+          >
+            <User className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
+            <span>{personaLabel}</span>
           </Button>
           <Button
             ghost

@@ -429,6 +429,26 @@ describe("ChatVoiceControls", () => {
     expect(window.localStorage.getItem("hermes_chat_speech_enabled")).toBe("off");
   });
 
+  it("toggles voice persona between Male (Jarvis) and Female (Gwen) and persists to localStorage", async () => {
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={() => true}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("Voice: Male");
+    await act(async () => button("Voice: Male").click());
+    expect(container.textContent).toContain("Voice: Female");
+    expect(window.localStorage.getItem("hermes_chat_voice_persona")).toBe("gwen");
+    await act(async () => button("Voice: Female").click());
+    expect(container.textContent).toContain("Voice: Male");
+    expect(window.localStorage.getItem("hermes_chat_voice_persona")).toBe("jarvis");
+  });
+
   it("falls back to the browser voice when OpenRouter playback fails instead of dropping the sentence", async () => {
     ttsMocks.playNextFn.mockResolvedValue({ spoke: false, fallbackToFish: false });
     let releaseSpeak!: () => void;

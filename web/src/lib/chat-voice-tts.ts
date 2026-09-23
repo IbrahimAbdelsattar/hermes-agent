@@ -2,6 +2,7 @@ import { authedFetch } from "@/lib/api";
 import {
   chooseOpenRouterTts,
   type TtsEngine,
+  type VoicePersona,
 } from "@/lib/chat-voice";
 import { sanitizeTextForSpeech } from "@/lib/speechUtils";
 
@@ -103,16 +104,18 @@ export function playAudioDataUrl(dataUrl: string): Promise<boolean> {
 export async function fetchOpenRouterSpeakUrl(
   text: string,
   engine: "flux" | "fish",
+  persona: VoicePersona = "jarvis",
 ): Promise<{ dataUrl: string; fallbackToFish: boolean } | null> {
   const clean = sanitizeTextForSpeech(text);
   if (!clean) return null;
-  const spec = chooseOpenRouterTts(clean, engine);
+  const spec = chooseOpenRouterTts(clean, engine, persona);
   try {
     const res = await authedFetch("/api/audio/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text: clean,
+        persona,
         provider: "openrouter",
         model_id: spec.model_id,
         voice_id: spec.voice_id,
@@ -136,8 +139,9 @@ export async function fetchOpenRouterSpeakUrl(
 export async function speakViaOpenRouter(
   text: string,
   engine: "flux" | "fish",
+  persona: VoicePersona = "jarvis",
 ): Promise<{ spoke: boolean; fallbackToFish: boolean }> {
-  const fetched = await fetchOpenRouterSpeakUrl(text, engine);
+  const fetched = await fetchOpenRouterSpeakUrl(text, engine, persona);
   if (!fetched) return { spoke: false, fallbackToFish: false };
   const played = await playAudioDataUrl(fetched.dataUrl);
   // Playback failure is NOT success: report it so the caller falls back to
@@ -205,11 +209,13 @@ export function mergeSentencesForNetworkTts(
  */
 export class TtsPrefetchPipeline {
   private engine: "flux" | "fish";
+  private persona: VoicePersona;
   private queue: PrefetchedSentence[] = [];
   private cancelled = false;
 
-  constructor(engine: "flux" | "fish") {
+  constructor(engine: "flux" | "fish", persona: VoicePersona = "jarvis") {
     this.engine = engine;
+    this.persona = persona;
   }
 
   /** Add sentences to the pipeline, immediately starting prefetch for them. */
@@ -222,7 +228,7 @@ export class TtsPrefetchPipeline {
       // as earlier ones are consumed (in playNext).
       const inflight = this.queue.length;
       if (inflight < MAX_PREFETCH) {
-        this.queue.push({ text, fetched: fetchOpenRouterSpeakUrl(text, this.engine) });
+        this.queue.push({ text, fetched: fetchOpenRouterSpeakUrl(text, this.engine, this.persona) });
       } else {
         this.queue.push({ text, fetched: _DEFERRED_SENTINEL });
       }
@@ -279,7 +285,7 @@ export class TtsPrefetchPipeline {
       if (this.queue[i].fetched === _DEFERRED_SENTINEL) {
         this.queue[i] = {
           text: this.queue[i].text,
-          fetched: fetchOpenRouterSpeakUrl(this.queue[i].text, this.engine),
+          fetched: fetchOpenRouterSpeakUrl(this.queue[i].text, this.engine, this.persona),
         };
       }
     }
@@ -289,4 +295,4 @@ export class TtsPrefetchPipeline {
 /** Sentinel promise for entries whose fetch is deferred beyond MAX_PREFETCH. */
 const _DEFERRED_SENTINEL: Promise<null> = Promise.resolve(null);
 
-export type { TtsEngine };
+export type { TtsEngine, VoicePersona };

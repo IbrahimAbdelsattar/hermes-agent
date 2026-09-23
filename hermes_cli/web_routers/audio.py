@@ -318,11 +318,20 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
         is_arabic_text = arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)
 
     if persona == "gwen":
-        # Gwen is 100% the Female AI (ElevenLabs Sarah voice) — unless the
-        # caller explicitly selected a provider/voice (e.g. OpenRouter TTS).
-        provider = provider or "elevenlabs"
-        voice_id = voice_id or "EXAVITQu4vr4xnSDxMaL"
-        model_id = model_id or "eleven_multilingual_v2"
+        # Gwen is the Female AI: uses ElevenLabs if configured, otherwise Edge Neural female voices
+        from tools.tool_backend_helpers import resolve_provider_secret
+        has_eleven = bool(resolve_provider_secret("ELEVENLABS_API_KEY", "elevenlabs"))
+        if not provider:
+            if has_eleven:
+                provider = "elevenlabs"
+                voice_id = voice_id or "EXAVITQu4vr4xnSDxMaL"
+                model_id = model_id or "eleven_multilingual_v2"
+            else:
+                provider = "edge"
+                if not voice_id:
+                    voice_id = "ar-EG-SalmaNeural" if is_arabic_text else "en-US-AriaNeural"
+        elif provider == "edge" and not voice_id:
+            voice_id = "ar-EG-SalmaNeural" if is_arabic_text else "en-US-AriaNeural"
     elif persona == "jarvis":
         # Jarvis is 100% the MALE AI! — same opt-out for explicit selections.
         provider = provider or "edge"

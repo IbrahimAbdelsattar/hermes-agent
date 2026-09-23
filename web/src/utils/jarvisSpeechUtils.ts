@@ -132,23 +132,22 @@ export const speakWithNabra = async (
 
   const isAr = /[\u0600-\u06FF]/.test(clean);
 
-  // Fast path for Jarvis: Browser Web SpeechSynthesis API gives instant (<50ms) natural speech.
-  // A failed attempt must fall through to the backend — a silent browser
-  // engine (no voices, autoplay denial, synthesis error) must never swallow
-  // the spoken reply.
-  if (persona === 'jarvis' && 'speechSynthesis' in window) {
+  // Fast path: Browser Web SpeechSynthesis API gives instant (<50ms) natural speech
+  // when a voice matching the requested persona and language is available.
+  // If no matching voice exists (e.g. no male Arabic voice in browser), fall through
+  // to the backend which has dedicated authentic neural voices for both genders.
+  if ('speechSynthesis' in window) {
     try {
       const voices = await getVoicesSafely();
-      // No voices at all means the browser engine cannot speak; skip
-      // straight to the backend instead of emitting silence.
       if (voices.length > 0) {
         const voice = isAr
-          ? pickArabicVoice(voices, 'jarvis')
-          : pickEnglishVoice(voices, 'jarvis');
-        const outcome = await speakWithBrowserVoice(clean, isAr, voice, 25000);
-        if (outcome === 'ended') return;
-        if (outcome === 'canceled') return;
-        // "failed": fall through to the Hermes audio backend below.
+          ? pickArabicVoice(voices, persona)
+          : pickEnglishVoice(voices, persona);
+        if (voice) {
+          const outcome = await speakWithBrowserVoice(clean, isAr, voice, 25000);
+          if (outcome === 'ended') return;
+          if (outcome === 'canceled') return;
+        }
       }
     } catch (e) {
       console.warn('Browser speech instant path notice:', e);
@@ -190,7 +189,9 @@ export const speakWithNabra = async (
       const voice = isAr
         ? pickArabicVoice(voices, persona)
         : pickEnglishVoice(voices, persona);
-      await speakWithBrowserVoice(clean, isAr, voice, 20000);
+      if (voice) {
+        await speakWithBrowserVoice(clean, isAr, voice, 20000);
+      }
     } catch {
       // browser speech fallback failed
     }

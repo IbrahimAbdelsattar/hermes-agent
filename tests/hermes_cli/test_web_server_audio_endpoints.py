@@ -83,3 +83,45 @@ def test_youtube_play_endpoint(client, monkeypatch):
     assert data["ok"] is True
     assert data["opened"] is True
     assert data["video"]["id"] == "xyz9876"
+
+
+def test_audio_speak_persona_voice_selection(client, monkeypatch, tmp_path):
+    """Ensure persona determines whether male or female Edge voice is used."""
+    import json
+    counter = 0
+
+    captured_calls = []
+
+    def fake_tts(text, provider=None, voice=None, model=None):
+        nonlocal counter
+        counter += 1
+        dummy_audio = tmp_path / f"audio_{counter}.mp3"
+        dummy_audio.write_bytes(b"dummy-audio")
+        captured_calls.append({"text": text, "provider": provider, "voice": voice, "model": model})
+        return json.dumps({"success": True, "file_path": str(dummy_audio)})
+
+    import tools.tts_tool as tts_module
+    monkeypatch.setattr(tts_module, "text_to_speech_tool", fake_tts)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+
+    # Jarvis (male) English
+    res = client.post("/api/audio/speak", json={"text": "Hello world", "persona": "jarvis"})
+    assert res.status_code == 200
+    assert captured_calls[-1]["voice"] == "en-US-GuyNeural"
+
+    # Jarvis (male) Arabic
+    res = client.post("/api/audio/speak", json={"text": "مرحبا بك", "persona": "jarvis"})
+    assert res.status_code == 200
+    assert captured_calls[-1]["voice"] == "ar-EG-ShakirNeural"
+
+    # Gwen (female) English
+    res = client.post("/api/audio/speak", json={"text": "Hello world", "persona": "gwen"})
+    assert res.status_code == 200
+    assert captured_calls[-1]["voice"] == "en-US-AriaNeural"
+
+    # Gwen (female) Arabic
+    res = client.post("/api/audio/speak", json={"text": "مرحبا بك", "persona": "gwen"})
+    assert res.status_code == 200
+    assert captured_calls[-1]["voice"] == "ar-EG-SalmaNeural"
+
+
