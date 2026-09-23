@@ -54,6 +54,23 @@ const MAX_UTTERANCE_CHUNKS = 120;
 /** Upper bound for the recorder's async stop handshake on submit. */
 const UTTERANCE_STOP_TIMEOUT_MS = 1500;
 
+/** The component's baseline "nothing happening" status. */
+const VOICE_READY_STATUS = "Voice ready";
+
+/**
+ * Statuses the speech pump itself writes. On a normal drain they must not
+ * outlive the audio: with the mic off, maybeResumeListening never restarts
+ * recognition (the thing that normally refreshes the status), so the stale
+ * "Hermes speaking" would sit on screen indefinitely. Statuses written by
+ * other paths while the pump was awaiting (mute, new message, reconnect)
+ * are not in this set and are never overwritten.
+ */
+const PUMP_OWNED_STATUSES = new Set([
+  "Hermes speaking",
+  "OpenRouter TTS unavailable — using the browser voice",
+  "Flux is English-only — used Fish for Arabic",
+]);
+
 /**
  * The user's explicit Voice choice. `null` means they never touched the
  * Voice toggle, so spoken replies simply follow the mic: enabling the Mic
@@ -119,7 +136,7 @@ export function ChatVoiceControls({
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [speechEnabled, setSpeechEnabled] = useState(storedSpeechPreference === "on");
   const [listening, setListening] = useState(false);
-  const [status, setStatus] = useState("Voice ready");
+  const [status, setStatus] = useState(VOICE_READY_STATUS);
   const [draft, setDraft] = useState("");
   const [pauseCountdown, setPauseCountdown] = useState<number | null>(null);
 
@@ -500,6 +517,12 @@ export function ChatVoiceControls({
     if (generation !== speechGenerationRef.current) return;
     speakingRef.current = false;
     setIsAssistantSpeaking(false);
+    // The drain finished normally: hand the status line back. Only a status
+    // the pump itself wrote is replaced — anything another path wrote while
+    // the pump was awaiting (mute, new message, reconnect) wins.
+    setStatus((current) =>
+      PUMP_OWNED_STATUSES.has(current) ? VOICE_READY_STATUS : current,
+    );
     maybeResumeListening();
   }, [maybeResumeListening, stopRecognition]);
 
@@ -972,7 +995,7 @@ export function ChatVoiceControls({
       if (speechEnabledRef.current && event.payload?.status !== "error") {
         drainReply(true);
       } else {
-        setStatus("Voice ready");
+        setStatus(VOICE_READY_STATUS);
         maybeResumeListening();
       }
     });

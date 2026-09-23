@@ -139,3 +139,41 @@ async def test_api_endpoint(req: TestApiRequest) -> Dict[str, Any]:
             }
 
     return await asyncio.to_thread(_ping)
+
+
+@router.get("/briefing")
+async def daily_briefing_endpoint(
+    city: str = Query("cairo", description="City preset for weather: cairo, alexandria, riyadh, dubai, london, newyork"),
+    refresh: bool = Query(False, description="Bypass cache and fetch fresh live data"),
+) -> Dict[str, Any]:
+    """Return consolidated live intelligence bulletin (currencies, weather, 4-channel news)."""
+    from hermes_cli.public_apis_briefing import get_full_briefing
+    briefing = await asyncio.to_thread(get_full_briefing, city=city, force_refresh=refresh)
+    return briefing
+
+
+@router.get("/briefing/news")
+async def briefing_news_endpoint(
+    channel: str = Query("ai", description="Channel: ai, economics, gaza, fundraising"),
+    limit: int = Query(15, ge=1, le=50, description="Max articles to fetch"),
+) -> Dict[str, Any]:
+    """Fetch live news articles for a specific intelligence channel."""
+    from hermes_cli.public_apis_briefing import fetch_channel_news
+    articles = await asyncio.to_thread(fetch_channel_news, channel=channel, limit=limit)
+    return {"channel": channel, "articles": articles, "count": len(articles)}
+
+
+@router.post("/briefing/summarize")
+async def briefing_summarize_endpoint(
+    city: str = Query("cairo", description="City preset for weather"),
+) -> Dict[str, Any]:
+    """Generate an executive intelligence summary ready for display or Jarvis TTS."""
+    from hermes_cli.public_apis_briefing import get_full_briefing, generate_executive_digest
+    briefing = await asyncio.to_thread(get_full_briefing, city=city, force_refresh=False)
+    summary_text = generate_executive_digest(briefing)
+    return {
+        "summary": summary_text,
+        "currencies": briefing.get("currencies", {}),
+        "weather": briefing.get("weather", {}),
+    }
+
