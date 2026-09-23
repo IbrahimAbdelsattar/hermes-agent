@@ -952,6 +952,13 @@ export function ChatVoiceControls({
       assistantBusyRef.current = false;
       setStatus("Chat is reconnecting");
     } else {
+      // The PTY link is back: clear the stale reconnect note, but leave any
+      // live status another path wrote after the drop (listening, speaking,
+      // error, explicit Voice choice) untouched — and never touch the stored
+      // speech preference itself.
+      setStatus((current) =>
+        current === "Chat is reconnecting" ? VOICE_READY_STATUS : current,
+      );
       maybeResumeListening();
       // A draft buffered when the link dropped lost its pause timer (cleared
       // by stopRecognition); re-arm so it still auto-submits.

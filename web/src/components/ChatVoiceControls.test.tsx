@@ -659,4 +659,59 @@ describe("ChatVoiceControls", () => {
     expect(container.textContent).toContain("Voice ready");
     expect(container.textContent).not.toContain("Hermes speaking");
   });
+
+  it("clears the reconnecting status when the chat reconnects without clobbering live status", async () => {
+    const onSubmit = vi.fn(() => true);
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected={false}
+          foreground="#fff"
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("Chat is reconnecting");
+
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("Voice ready");
+    expect(container.textContent).not.toContain("Chat is reconnecting");
+
+    // A live status written after the drop wins over the reconnect clear.
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected={false}
+          foreground="#fff"
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("Chat is reconnecting");
+    await act(async () => button("STT: Browser").click());
+    expect(container.textContent).toContain("Server transcription on");
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("Server transcription on");
+    expect(container.textContent).not.toContain("Voice ready");
+  });
 });
