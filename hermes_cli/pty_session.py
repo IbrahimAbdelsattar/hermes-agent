@@ -50,6 +50,14 @@ class PtySession:
         self.alive = True
         self.attached = False
         self.last_detached_at: Optional[float] = None
+        # Publisher channel the PTY child was spawned with
+        # (HERMES_TUI_SIDECAR_URL). A reload reattaches the same child but may
+        # present a different subscriber channel; those are recorded in
+        # ``aliases`` so old publisher frames still reach the reattached tab.
+        # Scoped to this session object: reaping the PTY drops its aliases,
+        # and aliases never cross attach tokens (one session per token).
+        self.pub_channel: Optional[str] = None
+        self.aliases: set = set()
         self._read_timeout = read_timeout
         self._ws = None
         self._attach_generation = 0
@@ -122,6 +130,20 @@ class PtySession:
         if force_redraw:
             return await self.write(ws, TUI_FORCE_REDRAW)
         return True
+
+    def note_pub_channel_or_alias(self, channel: Optional[str]) -> None:
+        """Record the spawn channel, or an alias when a reattach presents new one.
+
+        First channel wins as publisher (the child's sidecar URL is fixed at
+        spawn); later distinct channels are subscriber aliases healed by the
+        broadcast fan-out. No-ops on empty/identical channels.
+        """
+        if not channel:
+            return
+        if self.pub_channel is None:
+            self.pub_channel = channel
+        elif channel != self.pub_channel:
+            self.aliases.add(channel)
 
     def detach(self, ws) -> None:
         # Only the currently-attached socket may mark the session detached: a superseded socket's
@@ -207,6 +229,20 @@ class PtySessionRegistry:
         s = self._sessions.get(key)
         if s is not None:
             s.detach(ws)
+
+    def aliases_for(self, publish_channel: str) -> list:
+        """Subscriber channels aliased to a publisher channel (reattached tabs).
+
+        Read-only fan-out helper for the /api/pub broadcast. Sessions hold
+        their own aliases, so reaping a PTY drops them with it — no global map
+        to clean and no path for one attach token's alias to reach another's
+        session.
+        """
+        found: list = []
+        for s in self._sessions.values():
+            if s.pub_channel == publish_channel and s.aliases:
+                found.extend(sorted(s.aliases))
+        return found
 
     async def reap_idle(self, now: Optional[float] = None) -> None:
         now = time.monotonic() if now is None else now
