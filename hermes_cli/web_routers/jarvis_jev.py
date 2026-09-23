@@ -27,6 +27,7 @@ router = APIRouter()
 
 # Late-bound config/env readers to respect active profile scope and avoid stale imports
 load_env = late("load_env", "hermes_cli.config")
+resolve_provider_secret = late("resolve_provider_secret", "tools.tool_backend_helpers")
 
 TYPESAFE_DECISIONS_URL = "https://api.typesafe.ai/v1/decisions"
 OPENROUTER_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
@@ -59,7 +60,7 @@ class JevStatusResponse(BaseModel):
 
 
 def _get_api_credentials() -> Tuple[Optional[str], Optional[str]]:
-    """Resolve TYPESAFE_API_KEY and OPENROUTER_API_KEY from profile .env or environment."""
+    """Resolve TYPESAFE_API_KEY and OPENROUTER_API_KEY from profile .env, config, or environment."""
     env_dict: Dict[str, str] = {}
     try:
         env_fn = load_env
@@ -70,8 +71,15 @@ def _get_api_credentials() -> Tuple[Optional[str], Optional[str]]:
 
     typesafe_key = env_dict.get("TYPESAFE_API_KEY") or os.environ.get("TYPESAFE_API_KEY")
     openrouter_key = env_dict.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        try:
+            openrouter_key = resolve_provider_secret("OPENROUTER_API_KEY", "openrouter")
+        except Exception:
+            pass
+
     return (typesafe_key.strip() if typesafe_key else None,
             openrouter_key.strip() if openrouter_key else None)
+
 
 
 # ---------------------------------------------------------------------------

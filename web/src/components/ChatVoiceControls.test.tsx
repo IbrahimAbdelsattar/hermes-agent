@@ -734,4 +734,70 @@ describe("ChatVoiceControls", () => {
     expect(container.textContent).toContain("Server transcription on");
     expect(container.textContent).not.toContain("Voice ready");
   });
+
+  it("toggles Jev intent routing and intercepts fast-path commands without calling onSubmit", async () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn(() => true);
+    await act(async () => {
+      root.render(
+        <ChatVoiceControls
+          channel="chat-1"
+          connected
+          foreground="#fff"
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+
+    // Default is Jev On
+    expect(container.textContent).toContain("Jev: On");
+
+    // Toggle to Jev Off
+    await act(async () => button("Jev: On").click());
+    expect(container.textContent).toContain("Jev: Off");
+    expect(window.localStorage.getItem("hermes_chat_jev_enabled")).toBe("false");
+
+    // Toggle back to Jev On
+    await act(async () => button("Jev: Off").click());
+    expect(container.textContent).toContain("Jev: On");
+    expect(window.localStorage.getItem("hermes_chat_jev_enabled")).toBe("true");
+
+    // Start mic and dictate a fast-path music command
+    await act(async () => {
+      button("Mic").click();
+      vi.advanceTimersByTime(10);
+    });
+    const rec = FakeRecognition.instances.at(-1)!;
+
+    act(() => {
+      rec.onresult?.({
+        resultIndex: 0,
+        results: [{ 0: { transcript: "play lofi hip hop" }, isFinal: true }],
+      });
+    });
+
+    // Mock fetch for fast-path execution to prevent invalid relative URL in node
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok" }),
+    } as unknown as Response);
+
+    try {
+      // Submit the command
+      const sendBtn = button("Send");
+      await act(async () => {
+        sendBtn.click();
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+
+      // Intercepted by Jev fast-path: status updated and onSubmit bypassed
+      expect(container.textContent).toContain("Jev: music");
+      expect(onSubmit).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
+  });
 });
+

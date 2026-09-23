@@ -56,6 +56,22 @@ def test_jarvis_jev_status_openrouter_key(client, monkeypatch):
     assert data["active_key_source"] == "OPENROUTER_API_KEY"
 
 
+def test_jarvis_jev_status_resolve_provider_secret(client, monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    with patch(
+        "hermes_cli.web_routers.jarvis_jev.resolve_provider_secret",
+        return_value="sk-or-resolved-secret",
+    ):
+        r = client.get("/api/jarvis/jev-status")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["enabled"] is True
+        assert data["provider"] == "openrouter"
+        assert data["active_key_source"] == "OPENROUTER_API_KEY"
+
+
 def test_jarvis_jev_route_music_arabic(client):
     payload = {"text": "شغل عمرو دياب من فضلك", "language": "arabic_egyptian"}
     r = client.post("/api/jarvis/jev-route", json=payload)

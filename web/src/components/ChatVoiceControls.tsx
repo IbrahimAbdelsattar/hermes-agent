@@ -9,6 +9,7 @@ import {
   User,
   Volume2,
   VolumeX,
+  Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -41,6 +42,13 @@ import {
 import { mergeSentencesForNetworkTts, stopOpenRouterAudio, TtsPrefetchPipeline } from "@/lib/chat-voice-tts";
 import { transcribeAudioBlob } from "@/lib/server-transcribe";
 import { speakWithNabra, stopNabraAudio } from "@/utils/jarvisSpeechUtils";
+import {
+  classifyJevFastPath,
+  evaluateJevIntent,
+  executeJevFastPath,
+  isJevFastPathEnabled,
+  setJevFastPathEnabled,
+} from "@/utils/jarvisJevClient";
 import { JarvisUltronVoiceOrb } from "./JarvisUltronVoiceOrb";
 
 const VOICE_LANG_STORAGE_KEY = "hermes_chat_voice_lang";
@@ -221,6 +229,12 @@ export function ChatVoiceControls({
   useEffect(() => {
     voicePersonaRef.current = voicePersona;
   }, [voicePersona]);
+
+  const [jevEnabled, setJevEnabled] = useState<boolean>(() => isJevFastPathEnabled());
+  const jevEnabledRef = useRef<boolean>(jevEnabled);
+  useEffect(() => {
+    jevEnabledRef.current = jevEnabled;
+  }, [jevEnabled]);
 
   const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
@@ -415,9 +429,52 @@ export function ChatVoiceControls({
   }, [connected]);
 
   const submitCurrentDraftRef = useRef<() => boolean>(() => false);
+  const toggleLiveRef = useRef<() => void>(() => undefined);
 
   const submitTranscribed = useCallback(
     (finalPrompt: string, note: string) => {
+      // Jev fast-path intent triage (<1ms local check, plus OpenRouter Decisions)
+      if (jevEnabledRef.current) {
+        const isAr = languageModeRef.current === "ar" || /[\u0600-\u06FF]/.test(finalPrompt);
+        const persona = voicePersonaRef.current;
+        const fastDecision = classifyJevFastPath(finalPrompt, isAr);
+        if (fastDecision && fastDecision.bypass_llm) {
+          setStatus(`Jev: ${fastDecision.route}`);
+          if (speechEnabledRef.current && fastDecision.spoken_confirmation) {
+            void speakWithNabra(fastDecision.spoken_confirmation, persona, false);
+          }
+          void executeJevFastPath(fastDecision);
+          waitingForReplyRef.current = false;
+          assistantBusyRef.current = false;
+          if (fastDecision.route === "standby") {
+            toggleLiveRef.current();
+          } else {
+            maybeResumeListening();
+          }
+          return true;
+        }
+
+        // For ambiguous non-fast-path intents, evaluate via OpenRouter Decisions asynchronously
+        void (async () => {
+          try {
+            const decision = await evaluateJevIntent(
+              finalPrompt,
+              isAr ? "arabic_egyptian" : "english",
+              persona,
+            );
+            if (decision.bypass_llm && decision.confidence >= 0.85) {
+              setStatus(`Jev: ${decision.route} (${decision.provider})`);
+              if (speechEnabledRef.current && decision.spoken_confirmation) {
+                void speakWithNabra(decision.spoken_confirmation, persona, false);
+              }
+              void executeJevFastPath(decision);
+            }
+          } catch {
+            // ignore
+          }
+        })();
+      }
+
       if (onSubmit(finalPrompt)) {
         setStatus(note);
         return true;
@@ -840,6 +897,7 @@ export function ChatVoiceControls({
     stopRecognition,
     stopUtteranceRecorder,
   ]);
+  toggleLiveRef.current = toggleLive;
 
   const toggleSttMode = useCallback(() => {
     const next: SttMode = sttModeRef.current === "browser" ? "server" : "browser";
@@ -897,6 +955,14 @@ export function ChatVoiceControls({
       }
     }
     setStatus(`Voice persona: ${VOICE_PERSONA_LABELS[next]}`);
+  }, []);
+
+  const toggleJev = useCallback(() => {
+    const next = !jevEnabledRef.current;
+    jevEnabledRef.current = next;
+    setJevEnabled(next);
+    setJevFastPathEnabled(next);
+    setStatus(`Jev fast-path: ${next ? "Enabled (OpenRouter Decisions)" : "Disabled"}`);
   }, []);
 
   const toggleLanguage = useCallback(() => {
@@ -1227,6 +1293,24 @@ export function ChatVoiceControls({
             <Button
               ghost
               size="sm"
+              onClick={toggleJev}
+              title={
+                jevEnabled
+                  ? "Jev fast intent routing: Enabled (via OpenRouter Decisions ~typesafe/jev-latest, sub-150ms triage)"
+                  : "Jev fast intent routing: Disabled (click to enable)"
+              }
+              aria-label={`Jev fast routing: ${jevEnabled ? "Enabled" : "Disabled"}`}
+              aria-pressed={jevEnabled}
+              className={`h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px] ${
+                jevEnabled ? "text-[#00d2c4] border-[#00d2c4]/50" : "opacity-60"
+              }`}
+            >
+              <Zap className={`h-3.5 w-3.5 ${jevEnabled ? "text-[#00d2c4] fill-[#00d2c4]/30" : ""}`} />
+              <span>{jevEnabled ? "Jev: On" : "Jev: Off"}</span>
+            </Button>
+            <Button
+              ghost
+              size="sm"
               onClick={toggleSpeech}
               aria-pressed={speechEnabled}
               title="Toggle spoken Hermes replies"
@@ -1332,6 +1416,24 @@ export function ChatVoiceControls({
           >
             <User className="h-3.5 w-3.5 opacity-80 text-[#00d2c4]" />
             <span>{personaLabel}</span>
+          </Button>
+          <Button
+            ghost
+            size="sm"
+            onClick={toggleJev}
+            title={
+              jevEnabled
+                ? "Jev fast intent routing: Enabled (via OpenRouter Decisions ~typesafe/jev-latest, sub-150ms triage)"
+                : "Jev fast intent routing: Disabled (click to enable)"
+            }
+            aria-label={`Jev fast routing: ${jevEnabled ? "Enabled" : "Disabled"}`}
+            aria-pressed={jevEnabled}
+            className={`h-7 gap-1.5 border border-current/25 px-2 font-mono text-[11px] ${
+              jevEnabled ? "text-[#00d2c4] border-[#00d2c4]/50" : "opacity-60"
+            }`}
+          >
+            <Zap className={`h-3.5 w-3.5 ${jevEnabled ? "text-[#00d2c4] fill-[#00d2c4]/30" : ""}`} />
+            <span>{jevEnabled ? "Jev: On" : "Jev: Off"}</span>
           </Button>
           <Button
             ghost
