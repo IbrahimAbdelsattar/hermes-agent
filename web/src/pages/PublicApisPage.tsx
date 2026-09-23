@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Activity,
-  ArrowUpDown,
   Check,
   CheckCircle2,
   Copy,
@@ -21,7 +20,6 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
@@ -145,7 +143,7 @@ export default function PublicApisPage() {
       setTotalCount(data.total || 0);
     } catch (err) {
       console.error("Failed fetching public APIs:", err);
-      showToast("Could not load public APIs catalog", "destructive");
+      showToast("Could not load public APIs catalog", "error");
     } finally {
       setLoading(false);
     }
@@ -168,13 +166,13 @@ export default function PublicApisPage() {
       const result = await res.json();
       showToast(
         `Synchronized ${result.total_apis} APIs across ${result.total_categories} categories from GitHub!`,
-        "default"
+        "success"
       );
       void loadMetadata();
       void fetchApis();
     } catch (err) {
       console.error("Sync failed:", err);
-      showToast("Sync failed. Check network connectivity.", "destructive");
+      showToast("Sync failed. Check network connectivity.", "error");
     } finally {
       setSyncing(false);
     }
@@ -235,7 +233,7 @@ export default function PublicApisPage() {
         if (data.items && data.items.length > 0) {
           const picked = data.items[0];
           setSearchQuery(picked.name);
-          showToast(`Found: ${picked.name} (${picked.category})`, "default");
+          showToast(`Found: ${picked.name} (${picked.category})`, "success");
         }
       }
     } catch (err) {
@@ -287,7 +285,7 @@ export default function PublicApisPage() {
             <span>Surprise Me</span>
           </button>
           <Button
-            variant="outline"
+            outlined
             size="sm"
             onClick={() => void handleSync()}
             disabled={syncing}
@@ -493,7 +491,7 @@ export default function PublicApisPage() {
           </p>
           <Button
             size="sm"
-            variant="outline"
+            outlined
             onClick={() => {
               setSearchQuery("");
               setSelectedCategory("all");
@@ -718,7 +716,7 @@ export default function PublicApisPage() {
         <div className="flex items-center justify-between pt-3 border-t border-[#00f0ff]/20 font-mono text-xs">
           <Button
             size="sm"
-            variant="outline"
+            outlined
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             className="border-[#00f0ff]/30 text-[#00f0ff] hover:bg-[#00f0ff]/20"
@@ -732,7 +730,7 @@ export default function PublicApisPage() {
 
           <Button
             size="sm"
-            variant="outline"
+            outlined
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             className="border-[#00f0ff]/30 text-[#00f0ff] hover:bg-[#00f0ff]/20"
@@ -742,7 +740,7 @@ export default function PublicApisPage() {
         </div>
       )}
 
-      {toast && <Toast message={toast.message} type={toast.type} />}
+      {toast && <Toast toast={toast} />}
     </div>
   );
 }
