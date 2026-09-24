@@ -198,6 +198,19 @@ own schemas document the current contract. Reserve `computer_use` for browser
 *chrome* (the address bar, permission prompts, extension popups, native
 dialogs) and anything else on screen that isn't page content.
 
+## Opening Browsers and Tabs — New Chrome App Policy
+
+When the user asks to open a new tab, website, page, or URL (e.g. "open new tab", "open a tab", "open new tap", "open youtube", "open google"):
+- **CRITICAL: NEVER open a new tab in the existing Chrome window.** Do not send `ctrl+t` / `cmd+t` and do not click the "+" (New Tab) button in an already open Chrome window.
+- **Instead, always open it in a new Chrome App window** (standalone app mode `--app=<url>`) or a new Chrome window (`--new-window <url>`):
+  - **Using `open_browser_tab` tool:** Call `open_browser_tab(url="<target_url>")`. Hermes automatically launches Chrome in standalone app mode (`--app=<url>`) in a separate window.
+  - **Using command line / terminal:**
+    - On Windows: Run `start chrome --app="<url>"` or `& "C:\Program Files\Google\Chrome\Application\chrome.exe" --app="<url>"` via `terminal`.
+    - On macOS: Run `open -na "Google Chrome" --args --app="<url>"` via `terminal`.
+    - On Linux: Run `google-chrome --app="<url>"` (or `chromium --app="<url>"`) via `terminal`.
+  - If no URL is specified, default to `--app="https://www.google.com"`.
+  - If driving an active Chrome window directly with GUI shortcuts, use **New Window** (`ctrl+n` / `cmd+n`) rather than New Tab (`ctrl+t` / `cmd+t`).
+
 ### Key shortcuts vary per platform
 
 Use the host's idiomatic modifier:
@@ -205,7 +218,7 @@ Use the host's idiomatic modifier:
 | Common action | macOS | Windows / Linux |
 |---|---|---|
 | Save | `cmd+s` | `ctrl+s` |
-| New tab | `cmd+t` | `ctrl+t` |
+| New tab / window | Do NOT open tab in existing Chrome; launch new Chrome app (`--app=<url>`) or `cmd+n` / `ctrl+n` |
 | Close tab / window | `cmd+w` | `ctrl+w` |
 | Copy / paste | `cmd+c` / `cmd+v` | `ctrl+c` / `ctrl+v` |
 | Address bar | `cmd+l` | `ctrl+l` |

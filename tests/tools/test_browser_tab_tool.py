@@ -44,7 +44,17 @@ def test_open_browser_tab_with_desktop_ui_emitter():
     assert emitted[0][2]["url"] == "https://youtube.com"
 
 
+def test_open_browser_tab_chrome_app(monkeypatch):
+    monkeypatch.setattr("tools.browser_tab_tool._open_chrome_app", lambda url: True)
+    res = json.loads(open_browser_tab("https://example.com"))
+    assert res.get("success") is True
+    assert res.get("opened_in") == "chrome_app"
+
+
 def test_open_browser_tab_without_emitter(monkeypatch):
+    monkeypatch.setattr("tools.browser_tab_tool._open_chrome_app", lambda url: False)
     monkeypatch.setattr("webbrowser.open", lambda url: True)
     res = json.loads(open_browser_tab("https://example.com"))
     assert res.get("success") is True
+    assert res.get("opened_in") == "system_browser"
+
