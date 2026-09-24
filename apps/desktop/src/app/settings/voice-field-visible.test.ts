@@ -15,7 +15,18 @@ describe('voiceFieldVisible', () => {
   it('always shows top-level + non-provider keys', () => {
     const config = cfg()
 
-    for (const key of ['tts.provider', 'stt.enabled', 'stt.provider', 'voice.auto_tts', 'voice.record_key']) {
+    for (const key of [
+      'tts.provider',
+      'tts.speed',
+      'tts.output_format',
+      'tts.max_text_length',
+      'tts.streaming.min_len',
+      'tts.streaming.provider',
+      'stt.enabled',
+      'stt.provider',
+      'voice.auto_tts',
+      'voice.record_key'
+    ]) {
       expect(voiceFieldVisible(key, config)).toBe(true)
     }
   })
@@ -58,5 +69,8 @@ describe('voiceFieldVisible', () => {
   it('tracks a provider switch', () => {
     expect(voiceFieldVisible('tts.openai.voice', cfg({ tts: { provider: 'openai', openai: {} } }))).toBe(true)
     expect(voiceFieldVisible('tts.edge.voice', cfg({ tts: { provider: 'openai', openai: {} } }))).toBe(false)
+    expect(
+      voiceFieldVisible('tts.openrouter.voice', cfg({ tts: { provider: 'openrouter', openrouter: {} } }))
+    ).toBe(true)
   })
 })

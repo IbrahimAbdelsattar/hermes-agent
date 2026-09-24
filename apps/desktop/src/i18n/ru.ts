@@ -1,4 +1,8 @@
-import { defineFieldCopy } from '@/app/settings/field-copy'
+import {
+  FIELD_DESCRIPTIONS as DEFAULT_FIELD_DESCRIPTIONS,
+  FIELD_LABELS as DEFAULT_FIELD_LABELS
+} from '@/app/settings/constants'
+import { mergeFieldCopy } from '@/app/settings/field-copy'
 
 import { defineLocale } from './define-locale'
 
@@ -745,7 +749,7 @@ export const ru = defineLocale({
         turnOffFailed: 'Не удалось выключить питомца.'
       }
     },
-    fieldLabels: defineFieldCopy({
+    fieldLabels: mergeFieldCopy(DEFAULT_FIELD_LABELS, {
       model: 'Модель по умолчанию',
       modelContextLength: 'Переопределяет обнаруженное окно контекста ТОЛЬКО основной модели чата (в токенах). Оставьте 0, чтобы использовать обнаруженное значение выбранной модели. Не влияет на вспомогательные модели и модели MoA.',
       fallbackProviders: 'Резервные модели',
@@ -808,7 +812,17 @@ export const ru = defineLocale({
       voice: {
         recordKey: 'Горячая клавиша голосового ввода',
         maxRecordingSeconds: 'Макс. длительность записи',
-        autoTts: 'Зачитывать ответы вслух'
+        autoTts: 'Авто-TTS на сервере',
+        clientDirect: 'Прямые вызовы провайдера',
+        beepEnabled: 'Сигналы записи',
+        beepVolume: 'Громкость сигналов записи',
+        thinkingSound: 'Звук во время размышления',
+        silenceThreshold: 'Порог тишины при записи',
+        silenceDuration: 'Длительность тишины при записи',
+        bargeIn: 'Перебивание голосом',
+        bargeInGraceSeconds: 'Задержка перед перебиванием',
+        bargeInThresholdMultiplier: 'Множитель порога перебивания',
+        stopPhrases: 'Голосовые команды остановки'
       },
       stt: {
         enabled: 'Распознавание речи',
@@ -836,6 +850,13 @@ export const ru = defineLocale({
       },
       tts: {
         provider: 'Провайдер синтеза речи',
+        speed: 'Скорость воспроизведения по умолчанию',
+        outputFormat: 'Формат вывода по умолчанию',
+        maxTextLength: 'Лимит текста по умолчанию',
+        streaming: {
+          minLen: 'Минимум символов для первой фразы потока',
+          provider: 'Провайдер потокового TTS'
+        },
         edge: {
           voice: 'Голос Edge'
         },
@@ -882,6 +903,13 @@ export const ru = defineLocale({
         deepinfra: {
           model: 'Модель TTS DeepInfra',
           voice: 'Голос DeepInfra'
+        },
+        openrouter: {
+          model: 'Модель TTS OpenRouter',
+          voice: 'Голос OpenRouter',
+          speed: 'Скорость OpenRouter',
+          baseUrl: 'Базовый URL OpenRouter',
+          maxTextLength: 'Лимит текста OpenRouter'
         }
       },
       memory: {
@@ -918,7 +946,7 @@ export const ru = defineLocale({
         nonInteractiveLocalChanges: 'Локальные изменения при обновлении из приложения'
       }
     }),
-    fieldDescriptions: defineFieldCopy({
+    fieldDescriptions: mergeFieldCopy(DEFAULT_FIELD_DESCRIPTIONS, {
       model: 'Используется для новых чатов, если вы не выберете другую модель в композере.',
       modelContextLength: 'Оставьте 0, чтобы использовать обнаруженное окно контекста выбранной модели.',
       fallbackProviders:
@@ -977,9 +1005,26 @@ export const ru = defineLocale({
         }
       },
       voice: {
-        autoTts: 'Автоматически зачитывать ответы ассистента.'
+        autoTts:
+          'Серверная настройка автоматических голосовых ответов для CLI и шлюзов сообщений. Локальный переключатель «Зачитывать ответы вслух» в Desktop остаётся независимым.',
+        clientDirect:
+          'При удалённом подключении Desktop вызывает Voice Provider напрямую, не передавая аудио через шлюз.',
       },
       tts: {
+        speed: 'Резервная скорость для провайдеров без отдельной настройки. 1.0 — нормальная скорость.',
+        outputFormat: 'Контейнер синтезированного аудио по умолчанию; учитываются поддерживаемые провайдером форматы.',
+        maxTextLength: 'Лимит символов для одного TTS-запроса. Более длинный текст разбивается без усечения.',
+        streaming: {
+          minLen: 'Минимальная длина первой фразы, которую потоковый TTS может озвучить отдельно.',
+          provider: 'Закрепить потокового провайдера, выбрать автоматический режим или следовать выбранному TTS-провайдеру.'
+        },
+        openrouter: {
+          model: 'ID модели TTS OpenRouter. Помимо подсказок можно ввести новую модель.',
+          voice: 'ID голоса, поддерживаемый выбранной моделью OpenRouter TTS.',
+          speed: 'Скорость для моделей, которые её поддерживают. 1.0 — нормальная скорость.',
+          baseUrl: 'Необязательная конечная точка OpenRouter TTS.',
+          maxTextLength: 'Лимит символов для одного запроса OpenRouter; длинный текст разбивается.'
+        },
         xai: {
           voiceId: 'ID голоса xAI (например, eve) или ID пользовательского голоса.',
           language: 'Код языка речи (например, en, pt-BR) или «auto» для автоопределения.',

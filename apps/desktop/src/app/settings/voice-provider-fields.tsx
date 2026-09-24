@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
+  getApiRequestConnection,
+  getApiRequestProfile,
   getElevenLabsVoices,
   getHermesConfigSchema,
   type ProfileScope,
@@ -15,7 +17,7 @@ import type { HermesConfigRecord } from '@/types/hermes'
 import { hermesConfigCacheWriter, useHermesConfigRecord } from '../hooks/use-config-record'
 
 import { ConfigField } from './config-field'
-import { SECTIONS } from './constants'
+import { CURATED_FIELD_SCHEMAS, SECTIONS } from './constants'
 import { diffConfig, enumOptionsFor, getNested, inferFieldSchema, setNested } from './helpers'
 
 // The curated voice keys (Settings → Voice) are the single source of which
@@ -27,6 +29,16 @@ export function voiceProviderKeys(section: 'tts' | 'stt', providerKey: string): 
   const prefix = `${section}.${providerKey}.`
 
   return VOICE_KEYS.filter(key => key.startsWith(prefix))
+}
+
+export function voiceFieldsScopeKey(profile?: ProfileScope): string {
+  if (profile && typeof profile === 'object') {
+    return profileScopeKey(profile)
+  }
+
+  const selectedProfile = profile === null ? null : typeof profile === 'string' ? profile : getApiRequestProfile()
+
+  return `${getApiRequestConnection() || 'local'}::${selectedProfile || 'default'}`
 }
 
 /**
@@ -53,20 +65,40 @@ export function VoiceProviderFields({
 }) {
   const { t } = useI18n()
   const keys = useMemo(() => voiceProviderKeys(section, providerKey), [section, providerKey])
+  const wantsElevenLabs = keys.includes('tts.elevenlabs.voice_id')
+  const scopeKey = voiceFieldsScopeKey(profile)
   const { data: loadedConfig } = useHermesConfigRecord(profile)
   // Parents pass `profile` as a fresh object literal each render; keying the
   // writer and the autosave effect on its identity would re-arm the 550ms
-  // timer on every unrelated re-render. Key on the scope string instead
-  // (null when unscoped, which maps to the bare cache row).
-  const scopeKey = profile == null ? null : profileScopeKey(profile)
+  // timer on every unrelated re-render. Key on the resolved owner instead.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- scopeKey is the identity of `profile`
   const writeConfigCache = useMemo(() => hermesConfigCacheWriter(profile), [scopeKey])
 
   const { data: schemaResponse } = useQuery({
-    queryKey: ['hermes-config-schema'],
-    queryFn: () => getHermesConfigSchema(),
+    queryKey: ['hermes-config-schema', scopeKey],
+    queryFn: () => getHermesConfigSchema(profile),
+    enabled: keys.length > 0,
     staleTime: 5 * 60 * 1000
   })
+
+  const { data: elevenLabsVoices } = useQuery({
+    queryKey: ['elevenlabs-voices', scopeKey],
+    queryFn: () => getElevenLabsVoices(profile),
+    enabled: wantsElevenLabs,
+    staleTime: 5 * 60 * 1000
+  })
+
+  const elVoices = elevenLabsVoices?.available
+    ? elevenLabsVoices.voices.map(voice => voice.voice_id)
+    : undefined
+
+  const elVoiceLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        (elevenLabsVoices?.available ? elevenLabsVoices.voices : []).map(voice => [voice.voice_id, voice.label])
+      ),
+    [elevenLabsVoices]
+  )
 
   // Local editable draft, seeded once from the shared cache (background
   // refetches must not clobber in-progress edits) — the same shape as
@@ -78,6 +110,8 @@ export function VoiceProviderFields({
   // baseline advances to each successfully saved draft.
   const [baseline, setBaseline] = useState<HermesConfigRecord | null>(null)
   const seeded = useRef(false)
+  const saveVersionRef = useRef(0)
+  const [saveVersion, setSaveVersion] = useState(0)
 
   // eslint-disable-next-line no-restricted-syntax -- one-shot config seed flag, not an atom mirror
   useEffect(() => {
@@ -87,9 +121,6 @@ export function VoiceProviderFields({
       setConfig(loadedConfig)
     }
   }, [loadedConfig])
-
-  const saveVersionRef = useRef(0)
-  const [saveVersion, setSaveVersion] = useState(0)
 
   useEffect(() => {
     if (!config || saveVersion === 0) {
@@ -109,38 +140,6 @@ export function VoiceProviderFields({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- copy is stable; `profile` is keyed by scopeKey; avoid re-scheduling autosave on locale change
   }, [config, scopeKey, saveVersion, writeConfigCache])
 
-  // ElevenLabs cloned/library voices from the live account, when available —
-  // mirrors the Settings → Voice dynamic voice list.
-  const [elVoices, setElVoices] = useState<string[] | null>(null)
-  const [elVoiceLabels, setElVoiceLabels] = useState<Record<string, string>>({})
-  const wantsElevenLabs = keys.includes('tts.elevenlabs.voice_id')
-
-  useEffect(() => {
-    if (!wantsElevenLabs) {
-      return
-    }
-
-    let cancelled = false
-
-    getElevenLabsVoices()
-      .then(result => {
-        if (cancelled || !result.available) {
-          return
-        }
-
-        setElVoices(result.voices.map(voice => voice.voice_id))
-        setElVoiceLabels(Object.fromEntries(result.voices.map(voice => [voice.voice_id, voice.label])))
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setElVoices(null)
-          setElVoiceLabels({})
-        }
-      })
-
-    return () => void (cancelled = true)
-  }, [wantsElevenLabs])
-
   if (keys.length === 0 || !config) {
     return null
   }
@@ -157,7 +156,7 @@ export function VoiceProviderFields({
     <div className="grid gap-0.5 rounded-lg bg-background/55 px-2.5">
       {keys.map(key => {
         const value = getNested(config, key)
-        const field = schema[key] ?? inferFieldSchema(value)
+        const field = CURATED_FIELD_SCHEMAS[key] ?? schema[key] ?? inferFieldSchema(value)
         const isElVoice = key === 'tts.elevenlabs.voice_id'
 
         return (

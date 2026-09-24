@@ -73,11 +73,22 @@ const speakWithBrowserVoice = (
       resolve("failed");
       return;
     }
+    // Mutual exclusion: stop any active HTML audio before starting browser speech
+    stopOpenRouterAudio();
+
     let settled = false;
     const finish = (outcome: BrowserSpeechOutcome) => {
       if (settled) return;
       settled = true;
       clearTimeout(wedgeGuard);
+      // Clean up speech synthesis if interrupted, errored, or timed out
+      if (outcome !== "ended") {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // ignore
+        }
+      }
       resolve(outcome);
     };
     const utter = new SpeechSynthesisUtterance(clean);

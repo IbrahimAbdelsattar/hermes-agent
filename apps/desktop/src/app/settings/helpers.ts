@@ -1,7 +1,14 @@
 import { asText, normalize } from '@/lib/text'
 import type { ConfigFieldSchema, HermesConfigRecord, ToolsetInfo } from '@/types/hermes'
 
-import { BUILTIN_PERSONALITIES, ENUM_OPTIONS, PROVIDER_GROUPS, SECTIONS } from './constants'
+import {
+  BUILTIN_PERSONALITIES,
+  BUILTIN_TTS_PROVIDERS,
+  CURATED_FIELD_SCHEMAS,
+  ENUM_OPTIONS,
+  PROVIDER_GROUPS,
+  SECTIONS
+} from './constants'
 
 // Canonical implementations live in @/lib/text; re-exported here so the many
 // settings/capabilities call sites keep their import path.
@@ -170,6 +177,10 @@ export function voiceFieldVisible(key: string, config: HermesConfigRecord): bool
 
   const [, domain, provider] = match
 
+  if (domain === 'tts' && provider === 'streaming') {
+    return true
+  }
+
   if (domain === 'stt' && !getNested(config, 'stt.enabled')) {
     return false
   }
@@ -198,7 +209,7 @@ export function inferFieldSchema(value: unknown): ConfigFieldSchema {
   return { type: 'string' }
 }
 
-// Backend schema omits some declared keys; config presence is the availability signal.
+// Curated schemas cover optional fields; otherwise schema/config presence is the availability signal.
 export function sectionFieldEntries(
   schema: Record<string, ConfigFieldSchema>,
   config: HermesConfigRecord
@@ -208,7 +219,7 @@ export function sectionFieldEntries(
       s.id,
       s.keys.flatMap(k => {
         const value = getNested(config, k)
-        const field = schema[k] ?? (value === undefined ? undefined : inferFieldSchema(value))
+        const field = CURATED_FIELD_SCHEMAS[k] ?? schema[k] ?? (value === undefined ? undefined : inferFieldSchema(value))
 
         return field ? [[k, field] as [string, ConfigFieldSchema]] : []
       })
@@ -251,31 +262,9 @@ function personalityOptions(config: HermesConfigRecord): string[] {
   return [...new Set(['', ...BUILTIN_PERSONALITIES, ...customNames])]
 }
 
-// Built-in provider names, mirroring `tts_tool.py:BUILTIN_TTS_PROVIDERS` and
-// `transcription_tools.py:BUILTIN_STT_PROVIDERS`. The runtime rejects a built-in
-// name as a command provider before any config lookup
-// (`_resolve_command_provider_config`: `key = provider.lower().strip()`, then
-// `if key in BUILTIN_*_PROVIDERS: return None`), so a ``providers.edge`` block
-// declaring ``type: command`` still dispatches to native Edge.
-//
-// These are deliberately NOT derived from `ENUM_OPTIONS`, which is a *display*
-// list and already drifts from the runtime sets: it omits `deepinfra` (TTS) and
-// `deepinfra`/`local_command` (STT). Filtering on the display list would offer
-// those names as command providers that the runtime would never honour.
-const BUILTIN_TTS_PROVIDERS = new Set([
-  'edge',
-  'elevenlabs',
-  'openai',
-  'minimax',
-  'xai',
-  'mistral',
-  'gemini',
-  'neutts',
-  'kittentts',
-  'piper',
-  'deepinfra'
-])
-
+// Built-in provider names mirror the runtime registries. A `providers.<name>`
+// command block never shadows one of these names: the runtime checks the
+// built-in set before resolving custom command providers.
 const BUILTIN_STT_PROVIDERS = new Set([
   'local',
   'local_command',

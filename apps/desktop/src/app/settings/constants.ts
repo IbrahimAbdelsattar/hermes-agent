@@ -15,6 +15,7 @@ import {
   Wrench
 } from '@/lib/icons'
 import type { ThemeMode } from '@/themes/context'
+import type { ConfigFieldSchema } from '@/types/hermes'
 
 // Single source of truth for built-in personality names lives in
 // lib/personalities (mirrors hermes_cli/personality.py BUILTIN_PERSONALITIES).
@@ -229,6 +230,27 @@ export const PROVIDER_GROUPS: ProviderPrefix[] = [
   }
 ]
 
+export const BUILTIN_TTS_PROVIDER_KEYS = [
+  'edge',
+  'elevenlabs',
+  'openai',
+  'xai',
+  'minimax',
+  'mistral',
+  'gemini',
+  'deepinfra',
+  'openrouter',
+  'neutts',
+  'kittentts',
+  'piper'
+] as const
+
+export const BUILTIN_TTS_PROVIDERS = new Set<string>(BUILTIN_TTS_PROVIDER_KEYS)
+
+const TTS_OUTPUT_FORMAT_OPTIONS = ['', 'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'amr', 'opus', 'pcm']
+const OPENAI_RESPONSE_FORMAT_OPTIONS = ['', 'mp3', 'opus', 'aac', 'flac', 'wav']
+const OPENROUTER_RESPONSE_FORMAT_OPTIONS = ['', 'mp3', 'pcm']
+
 // Schema-side select overrides for desktop-relevant enum fields whose
 // backend schema only declares a string type.
 export const ENUM_OPTIONS: Record<string, string[]> = {
@@ -335,6 +357,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   ],
   'tts.xai.voice_id': ['eve'],
   'tts.minimax.model': ['speech-02-hd', 'speech-02-turbo'],
+  'tts.minimax.region': ['', 'global', 'cn'],
   'tts.mistral.model': ['voxtral-mini-tts-2603'],
   'tts.kittentts.model': [
     'KittenML/kitten-tts-nano-0.8-int8',
@@ -343,22 +366,18 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   ],
   'tts.kittentts.voice': ['Jasper'],
   'tts.piper.voice': ['en_US-lessac-medium', 'en_US-amy-medium', 'en_US-ryan-high', 'en_GB-alan-medium'],
+  'tts.openrouter.model': ['deepgram/flux-tts:free', 'fish-audio/s2.1-pro-free:free'],
+  'tts.openrouter.voice': ['flux-alexis-en', 'flux-bruce-en', 'b347db033a6549378b48d00acb0d06cd'],
+  'tts.output_format': TTS_OUTPUT_FORMAT_OPTIONS,
+  'tts.openai.response_format': OPENAI_RESPONSE_FORMAT_OPTIONS,
+  'tts.deepinfra.response_format': OPENAI_RESPONSE_FORMAT_OPTIONS,
+  'tts.openrouter.response_format': OPENROUTER_RESPONSE_FORMAT_OPTIONS,
+  'tts.streaming.provider': ['', 'auto', 'elevenlabs', 'openai', 'gemini', 'xai'],
   'tts.neutts.model': ['neuphonic/neutts-air-q4-gguf', 'neuphonic/neutts-air-q8-gguf', 'neuphonic/neutts-air'],
   // Text-to-speech backends — kept in sync with the built-in source of truth
   // (agent/tts_registry.py::_BUILTIN_NAMES / tools/tts_tool.py::
   // BUILTIN_TTS_PROVIDERS). 'xai' is Grok TTS.
-  'tts.provider': [
-    'edge',
-    'elevenlabs',
-    'openai',
-    'xai',
-    'minimax',
-    'mistral',
-    'gemini',
-    'neutts',
-    'kittentts',
-    'piper'
-  ],
+  'tts.provider': [...BUILTIN_TTS_PROVIDER_KEYS],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'gpt-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
@@ -401,8 +420,72 @@ export const FREE_INPUT_KEYS = new Set([
   'tts.kittentts.voice',
   'tts.piper.voice',
   'tts.deepinfra.model',
-  'tts.deepinfra.voice'
+  'tts.deepinfra.voice',
+  'tts.openrouter.model',
+  'tts.openrouter.voice'
 ])
+
+export const CURATED_FIELD_SCHEMAS: Record<string, ConfigFieldSchema> = {
+  'tts.speed': { type: 'number' },
+  'tts.output_format': { type: 'select' },
+  'tts.max_text_length': { type: 'number' },
+  'tts.streaming.min_len': { type: 'number' },
+  'tts.streaming.provider': { type: 'select' },
+  'tts.edge.speed': { type: 'number' },
+  'tts.edge.max_text_length': { type: 'number' },
+  'tts.openai.speed': { type: 'number' },
+  'tts.openai.base_url': { type: 'string' },
+  'tts.openai.language': { type: 'string' },
+  'tts.openai.instructions': { type: 'text' },
+  'tts.openai.response_format': { type: 'select' },
+  'tts.openai.max_text_length': { type: 'number' },
+  'tts.elevenlabs.speed': { type: 'number' },
+  'tts.elevenlabs.streaming_model_id': { type: 'string' },
+  'tts.elevenlabs.base_url': { type: 'string' },
+  'tts.elevenlabs.wss_url': { type: 'string' },
+  'tts.elevenlabs.max_text_length': { type: 'number' },
+  'tts.xai.base_url': { type: 'string' },
+  'tts.xai.text_normalization': { type: 'boolean' },
+  'tts.xai.streaming_url': { type: 'string' },
+  'tts.xai.max_text_length': { type: 'number' },
+  'tts.minimax.region': { type: 'select' },
+  'tts.minimax.base_url': { type: 'string' },
+  'tts.minimax.speed': { type: 'number' },
+  'tts.minimax.vol': { type: 'number' },
+  'tts.minimax.pitch': { type: 'number' },
+  'tts.minimax.emotion': { type: 'string' },
+  'tts.minimax.sample_rate': { type: 'number' },
+  'tts.minimax.bitrate': { type: 'number' },
+  'tts.minimax.group_id': { type: 'string' },
+  'tts.minimax.max_text_length': { type: 'number' },
+  'tts.mistral.base_url': { type: 'string' },
+  'tts.mistral.max_text_length': { type: 'number' },
+  'tts.gemini.base_url': { type: 'string' },
+  'tts.gemini.max_text_length': { type: 'number' },
+  'tts.neutts.max_text_length': { type: 'number' },
+  'tts.kittentts.speed': { type: 'number' },
+  'tts.kittentts.clean_text': { type: 'boolean' },
+  'tts.kittentts.max_text_length': { type: 'number' },
+  'tts.piper.voices_dir': { type: 'string' },
+  'tts.piper.use_cuda': { type: 'boolean' },
+  'tts.piper.length_scale': { type: 'number' },
+  'tts.piper.noise_scale': { type: 'number' },
+  'tts.piper.noise_w_scale': { type: 'number' },
+  'tts.piper.volume': { type: 'number' },
+  'tts.piper.normalize_audio': { type: 'boolean' },
+  'tts.piper.speaker_id': { type: 'number' },
+  'tts.piper.max_text_length': { type: 'number' },
+  'tts.deepinfra.speed': { type: 'number' },
+  'tts.deepinfra.base_url': { type: 'string' },
+  'tts.deepinfra.language': { type: 'string' },
+  'tts.deepinfra.instructions': { type: 'text' },
+  'tts.deepinfra.response_format': { type: 'select' },
+  'tts.deepinfra.max_text_length': { type: 'number' },
+  'tts.openrouter.speed': { type: 'number' },
+  'tts.openrouter.base_url': { type: 'string' },
+  'tts.openrouter.response_format': { type: 'select' },
+  'tts.openrouter.max_text_length': { type: 'number' }
+}
 
 export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   model: 'Default Model',
@@ -468,9 +551,20 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   voice: {
     recordKey: 'Voice Shortcut',
     maxRecordingSeconds: 'Max Recording Length',
-    autoTts: 'Read Responses Aloud',
+    autoTts: 'Backend Auto-TTS',
     voiceChatMode: 'Voice Chat Mode',
+    clientDirect: 'Direct Provider Calls',
+    beepEnabled: 'Recording Beeps',
+    beepVolume: 'Recording Beep Volume',
+    thinkingSound: 'Thinking Sound',
+    silenceThreshold: 'Recording Silence Threshold',
+    silenceDuration: 'Recording Silence Duration',
+    bargeIn: 'Barge In',
+    bargeInGraceSeconds: 'Barge-In Grace Period',
+    bargeInThresholdMultiplier: 'Barge-In Threshold Multiplier',
+    stopPhrases: 'Voice Stop Phrases',
     gptLive: {
+      model: 'GPT-Live Model',
       voice: 'GPT-Live Voice',
       instructions: 'GPT-Live Persona'
     }
@@ -501,52 +595,123 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   },
   tts: {
     provider: 'Text-To-Speech Provider',
+    speed: 'Default Playback Speed',
+    outputFormat: 'Default Output Format',
+    maxTextLength: 'Default Text Limit',
+    streaming: {
+      minLen: 'Streaming Sentence Minimum',
+      provider: 'Streaming Provider'
+    },
     edge: {
-      voice: 'Edge Voice'
+      voice: 'Edge Voice',
+      speed: 'Edge Playback Speed',
+      maxTextLength: 'Edge Text Limit'
     },
     openai: {
       model: 'OpenAI TTS Model',
-      voice: 'OpenAI Voice'
+      voice: 'OpenAI Voice',
+      speed: 'OpenAI Playback Speed',
+      baseUrl: 'OpenAI-Compatible Base URL',
+      language: 'OpenAI Language Hint',
+      instructions: 'OpenAI Voice Instructions',
+      responseFormat: 'OpenAI Response Format',
+      consentAttestation: 'OpenAI Voice Consent',
+      pcmSampleRate: 'OpenAI PCM Sample Rate',
+      maxTextLength: 'OpenAI Text Limit'
     },
     elevenlabs: {
       voiceId: 'ElevenLabs Voice',
-      modelId: 'ElevenLabs Model'
+      modelId: 'ElevenLabs Model',
+      speed: 'ElevenLabs Playback Speed',
+      streamingModelId: 'ElevenLabs Streaming Model',
+      baseUrl: 'ElevenLabs Base URL',
+      wssUrl: 'ElevenLabs WebSocket URL',
+      maxTextLength: 'ElevenLabs Text Limit'
     },
     xai: {
       voiceId: 'xAI (Grok) Voice',
       language: 'xAI Language',
       speed: 'xAI Playback Speed',
+      baseUrl: 'xAI Base URL',
       autoSpeechTags: 'xAI Auto Speech Tags',
+      textNormalization: 'xAI Text Normalization',
+      streamingUrl: 'xAI Streaming URL',
       optimizeStreamingLatency: 'xAI Streaming Latency Optimization',
       sampleRate: 'xAI Sample Rate',
-      bitRate: 'xAI Bit Rate'
+      bitRate: 'xAI Bit Rate',
+      maxTextLength: 'xAI Text Limit'
     },
     minimax: {
       model: 'MiniMax TTS Model',
-      voiceId: 'MiniMax Voice'
+      voiceId: 'MiniMax Voice',
+      region: 'MiniMax Region',
+      baseUrl: 'MiniMax Base URL',
+      speed: 'MiniMax Playback Speed',
+      vol: 'MiniMax Volume',
+      pitch: 'MiniMax Pitch',
+      emotion: 'MiniMax Emotion',
+      sampleRate: 'MiniMax Sample Rate',
+      bitrate: 'MiniMax Bitrate',
+      groupId: 'MiniMax Group ID',
+      maxTextLength: 'MiniMax Text Limit'
     },
     mistral: {
       model: 'Mistral TTS Model',
-      voiceId: 'Mistral Voice'
+      voiceId: 'Mistral Voice',
+      baseUrl: 'Mistral Base URL',
+      maxTextLength: 'Mistral Text Limit'
     },
     gemini: {
       model: 'Gemini TTS Model',
-      voice: 'Gemini Voice'
+      voice: 'Gemini Voice',
+      baseUrl: 'Gemini Base URL',
+      audioTags: 'Gemini Audio Tags',
+      personaPromptFile: 'Gemini Persona File',
+      maxTextLength: 'Gemini Text Limit'
     },
     neutts: {
       model: 'NeuTTS Model',
-      device: 'NeuTTS Device'
+      device: 'NeuTTS Device',
+      refAudio: 'NeuTTS Reference Audio',
+      refText: 'NeuTTS Reference Text',
+      maxTextLength: 'NeuTTS Text Limit'
     },
     kittentts: {
       model: 'KittenTTS Model',
-      voice: 'KittenTTS Voice'
+      voice: 'KittenTTS Voice',
+      speed: 'KittenTTS Playback Speed',
+      cleanText: 'KittenTTS Text Cleanup',
+      maxTextLength: 'KittenTTS Text Limit'
     },
     piper: {
-      voice: 'Piper Voice'
+      voice: 'Piper Voice',
+      voicesDir: 'Piper Voice Directory',
+      useCuda: 'Piper CUDA',
+      lengthScale: 'Piper Length Scale',
+      noiseScale: 'Piper Noise Scale',
+      noiseWScale: 'Piper Noise W-Scale',
+      volume: 'Piper Volume',
+      normalizeAudio: 'Piper Audio Normalization',
+      speakerId: 'Piper Speaker ID',
+      maxTextLength: 'Piper Text Limit'
     },
     deepinfra: {
       model: 'DeepInfra TTS Model',
-      voice: 'DeepInfra Voice'
+      voice: 'DeepInfra Voice',
+      speed: 'DeepInfra Playback Speed',
+      baseUrl: 'DeepInfra Base URL',
+      language: 'DeepInfra Language Hint',
+      instructions: 'DeepInfra Voice Instructions',
+      responseFormat: 'DeepInfra Response Format',
+      maxTextLength: 'DeepInfra Text Limit'
+    },
+    openrouter: {
+      model: 'OpenRouter TTS Model',
+      voice: 'OpenRouter Voice',
+      speed: 'OpenRouter Playback Speed',
+      baseUrl: 'OpenRouter Base URL',
+      responseFormat: 'OpenRouter Response Format',
+      maxTextLength: 'OpenRouter Text Limit'
     }
   },
   memory: {
@@ -648,27 +813,129 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     }
   },
   voice: {
-    autoTts: 'Automatically speak assistant responses.',
+    autoTts:
+      'Backend default for automatically speaking voice replies in the CLI and messaging gateways. The Desktop Read Replies Aloud control remains an independent local preference.',
     voiceChatMode:
       'chained: speech-to-text → Hermes → text-to-speech with the providers below. gpt-live: one full-duplex OpenAI voice model (gpt-live-1) listens and talks, and hands every real request to Hermes — any model you have selected answers with the full toolset. Needs an OpenAI API key; the voice layer bills $0.05 per minute.',
+    clientDirect:
+      'When connected remotely, let Desktop call the active profile’s speech providers directly instead of relaying audio through the gateway.',
+    beepEnabled: 'Play a short sound when voice recording starts and stops.',
+    beepVolume: 'Recording beep volume from 0 to 1.',
+    thinkingSound: 'Play a subtle ambient cue while the agent is working during voice conversation.',
+    silenceThreshold: 'RMS level below 0–32767 that counts as silence while recording.',
+    silenceDuration: 'Seconds of silence before recording stops automatically.',
+    bargeIn: 'Let the user interrupt generated speech by speaking.',
+    bargeInGraceSeconds: 'Delay before barge-in is armed after speech starts.',
+    bargeInThresholdMultiplier: 'Speech must exceed the calibrated room noise by this factor to trigger barge-in.',
+    stopPhrases: 'Comma-separated phrases that end a hands-free voice conversation. Leave empty to disable them.',
     gptLive: {
+      model: 'OpenAI model used by the full-duplex GPT-Live voice layer.',
       voice: 'Voice for GPT-Live mode. Custom voice IDs are accepted.',
       instructions:
         'Extra sentences for the live voice persona (tone, pace, language). Hermes keeps its own system prompt.'
     }
   },
   tts: {
+    speed: 'Fallback playback speed for providers that do not define their own speed. 1.0 is normal.',
+    outputFormat: 'Preferred synthesized audio container. A provider’s supported formats still apply.',
+    maxTextLength: 'Default maximum characters sent in one TTS request. Longer text is split instead of truncated.',
+    streaming: {
+      minLen: 'Shortest first sentence, in characters, that streaming speech can play on its own.',
+      provider: 'Pin a streaming provider, choose Auto, or leave blank to follow the selected TTS provider.'
+    },
+    edge: {
+      speed: 'Playback speed for Edge TTS. 1.0 is normal.',
+      maxTextLength: 'Maximum characters per Edge request. Longer text is split.'
+    },
+    openai: {
+      speed: 'Playback speed for OpenAI and compatible endpoints. 1.0 is normal.',
+      baseUrl: 'Optional OpenAI-compatible speech endpoint. Leave blank for the official API.',
+      language: 'Optional language hint forwarded as lang_code by compatible endpoints.',
+      instructions: 'Optional voice-design direction such as tone, emotion, pacing, or accent.',
+      responseFormat: 'Audio response format requested from OpenAI or a compatible endpoint.',
+      consentAttestation: 'Optional consent text required by compatible servers for cloned voices.',
+      pcmSampleRate: 'Expected raw PCM sample rate for compatible streaming endpoints that omit the response header.',
+      maxTextLength: 'Maximum characters per OpenAI request. Longer text is split.'
+    },
+    elevenlabs: {
+      speed: 'Playback speed for ElevenLabs models that support it. 1.0 is normal; v3 models ignore this.',
+      streamingModelId: 'Optional model override used only for chunked streaming playback.',
+      baseUrl: 'Optional ElevenLabs API base URL.',
+      wssUrl: 'Optional ElevenLabs streaming WebSocket URL. Derived from Base URL when blank.',
+      maxTextLength: 'Maximum characters per ElevenLabs request. Longer text is split.'
+    },
     xai: {
       voiceId: 'xAI voice ID (e.g. eve) or a custom voice ID.',
       language: 'Spoken language code (e.g. en, pt-BR) or "auto" for auto-detection.',
       speed: 'Playback speed. 0.7 = slower, 1.0 = normal, 1.5 = faster.',
+      baseUrl: 'Optional xAI TTS endpoint override.',
       autoSpeechTags: 'Let an LLM insert expressive audio tags ([laughing], [sighs]) into the script before synthesis.',
+      textNormalization: 'Speak numbers, abbreviations, and symbols in written form.',
+      streamingUrl: 'Optional xAI chunked-TTS WebSocket endpoint override.',
       optimizeStreamingLatency: 'Latency vs. quality trade-off. 0 = best quality, 2 = lowest latency.',
       sampleRate: 'Audio sample rate in Hz. Higher = better quality, larger files.',
-      bitRate: 'MP3 bitrate in bps. Only applies when codec is mp3.'
+      bitRate: 'MP3 bitrate in bps. Only applies when codec is mp3.',
+      maxTextLength: 'Maximum characters per xAI request. Longer text is split.'
+    },
+    minimax: {
+      region: 'MiniMax service region. The selected region also selects its matching credential.',
+      baseUrl: 'Optional MiniMax TTS endpoint override for the selected region.',
+      speed: 'MiniMax speech speed. 1.0 is normal.',
+      vol: 'MiniMax output volume.',
+      pitch: 'MiniMax pitch adjustment.',
+      emotion: 'MiniMax delivery emotion.',
+      sampleRate: 'MiniMax output sample rate in Hz.',
+      bitrate: 'MiniMax output bitrate in bps.',
+      groupId: 'Optional MiniMax Group ID appended to requests that do not already carry one.',
+      maxTextLength: 'Maximum characters per MiniMax request. Longer text is split.'
+    },
+    mistral: {
+      baseUrl: 'Optional Mistral API base URL.',
+      maxTextLength: 'Maximum characters per Mistral request. Longer text is split.'
+    },
+    gemini: {
+      baseUrl: 'Optional Gemini API base URL.',
+      audioTags: 'Let an auxiliary model add expressive audio tags for supported Gemini 3.1 TTS models.',
+      personaPromptFile: 'Optional Markdown or text file with performance direction for Gemini.',
+      maxTextLength: 'Maximum characters per Gemini request, including persona and tag directions.'
     },
     neutts: {
-      device: 'Local inference device for NeuTTS.'
+      device: 'Local inference device for NeuTTS.',
+      refAudio: 'Optional reference-audio file. Blank uses the bundled sample.',
+      refText: 'Optional transcript for the reference audio. Blank uses the bundled sample.',
+      maxTextLength: 'Maximum characters per NeuTTS request. Longer text is split.'
+    },
+    kittentts: {
+      speed: 'KittenTTS playback speed. 1.0 is normal.',
+      cleanText: 'Expand numbers, currencies, and units before local synthesis.',
+      maxTextLength: 'Maximum characters per KittenTTS request. Longer text is split.'
+    },
+    piper: {
+      voicesDir: 'Optional directory for downloaded Piper voices. Blank uses the profile cache.',
+      useCuda: 'Load Piper with CUDA when the installed runtime supports it.',
+      lengthScale: 'Piper speaking-time scale. 2.0 is about twice as slow.',
+      noiseScale: 'Piper phoneme noise scale.',
+      noiseWScale: 'Piper word-boundary noise scale.',
+      volume: 'Piper output volume.',
+      normalizeAudio: 'Normalize Piper audio before playback.',
+      speakerId: 'Optional Piper speaker ID for voices that expose multiple speakers.',
+      maxTextLength: 'Maximum characters per Piper request. Longer text is split.'
+    },
+    deepinfra: {
+      speed: 'Playback speed for DeepInfra. 1.0 is normal.',
+      baseUrl: 'Optional DeepInfra TTS endpoint override.',
+      language: 'Optional language hint forwarded by compatible DeepInfra endpoints.',
+      instructions: 'Optional voice-design direction forwarded to compatible DeepInfra endpoints.',
+      responseFormat: 'Audio response format requested from DeepInfra.',
+      maxTextLength: 'Maximum characters per DeepInfra request. Longer text is split.'
+    },
+    openrouter: {
+      model: 'OpenRouter TTS model ID. Built-in suggestions stay editable for new models.',
+      voice: 'Voice ID accepted by the selected OpenRouter TTS model.',
+      speed: 'Playback speed for models that support it. 1.0 is normal.',
+      baseUrl: 'Optional OpenRouter TTS endpoint override.',
+      responseFormat: 'Audio response format requested from OpenRouter, such as mp3 or pcm.',
+      maxTextLength: 'Maximum characters per OpenRouter request. Longer text is split.'
     }
   },
   stt: {
@@ -764,38 +1031,24 @@ export const SECTIONS: DesktopConfigSection[] = [
     icon: Mic,
     keys: [
       'voice.voice_chat_mode',
+      'voice.gpt_live.model',
       'voice.gpt_live.voice',
       'voice.gpt_live.instructions',
-      'tts.provider',
+      'voice.record_key',
+      'voice.max_recording_seconds',
+      'voice.client_direct',
+      'voice.beep_enabled',
+      'voice.beep_volume',
+      'voice.thinking_sound',
+      'voice.silence_threshold',
+      'voice.silence_duration',
+      'voice.barge_in',
+      'voice.barge_in_grace_seconds',
+      'voice.barge_in_threshold_multiplier',
+      'voice.stop_phrases',
       'stt.enabled',
       'stt.echo_transcripts',
       'stt.provider',
-      'voice.auto_tts',
-      'tts.edge.voice',
-      'tts.openai.model',
-      'tts.openai.voice',
-      'tts.elevenlabs.voice_id',
-      'tts.elevenlabs.model_id',
-      'tts.xai.voice_id',
-      'tts.xai.language',
-      'tts.xai.speed',
-      'tts.xai.auto_speech_tags',
-      'tts.xai.optimize_streaming_latency',
-      'tts.xai.sample_rate',
-      'tts.xai.bit_rate',
-      'tts.minimax.model',
-      'tts.minimax.voice_id',
-      'tts.mistral.model',
-      'tts.mistral.voice_id',
-      'tts.gemini.model',
-      'tts.gemini.voice',
-      'tts.neutts.model',
-      'tts.neutts.device',
-      'tts.kittentts.model',
-      'tts.kittentts.voice',
-      'tts.piper.voice',
-      'tts.deepinfra.model',
-      'tts.deepinfra.voice',
       'stt.local.model',
       'stt.local.language',
       'stt.openai.model',
@@ -805,9 +1058,100 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.elevenlabs.language_code',
       'stt.elevenlabs.tag_audio_events',
       'stt.elevenlabs.diarize',
-      'voice.record_key',
-      'voice.max_recording_seconds',
-      'voice.client_direct'
+      'voice.auto_tts',
+      'tts.provider',
+      'tts.speed',
+      'tts.output_format',
+      'tts.max_text_length',
+      'tts.streaming.min_len',
+      'tts.streaming.provider',
+      'tts.edge.voice',
+      'tts.edge.speed',
+      'tts.edge.max_text_length',
+      'tts.openai.model',
+      'tts.openai.voice',
+      'tts.openai.speed',
+      'tts.openai.base_url',
+      'tts.openai.language',
+      'tts.openai.instructions',
+      'tts.openai.response_format',
+      'tts.openai.consent_attestation',
+      'tts.openai.pcm_sample_rate',
+      'tts.openai.max_text_length',
+      'tts.elevenlabs.voice_id',
+      'tts.elevenlabs.model_id',
+      'tts.elevenlabs.speed',
+      'tts.elevenlabs.streaming_model_id',
+      'tts.elevenlabs.base_url',
+      'tts.elevenlabs.wss_url',
+      'tts.elevenlabs.max_text_length',
+      'tts.xai.voice_id',
+      'tts.xai.language',
+      'tts.xai.speed',
+      'tts.xai.base_url',
+      'tts.xai.auto_speech_tags',
+      'tts.xai.text_normalization',
+      'tts.xai.streaming_url',
+      'tts.xai.optimize_streaming_latency',
+      'tts.xai.sample_rate',
+      'tts.xai.bit_rate',
+      'tts.xai.max_text_length',
+      'tts.minimax.model',
+      'tts.minimax.voice_id',
+      'tts.minimax.region',
+      'tts.minimax.base_url',
+      'tts.minimax.speed',
+      'tts.minimax.vol',
+      'tts.minimax.pitch',
+      'tts.minimax.emotion',
+      'tts.minimax.sample_rate',
+      'tts.minimax.bitrate',
+      'tts.minimax.group_id',
+      'tts.minimax.max_text_length',
+      'tts.mistral.model',
+      'tts.mistral.voice_id',
+      'tts.mistral.base_url',
+      'tts.mistral.max_text_length',
+      'tts.gemini.model',
+      'tts.gemini.voice',
+      'tts.gemini.base_url',
+      'tts.gemini.audio_tags',
+      'tts.gemini.persona_prompt_file',
+      'tts.gemini.max_text_length',
+      'tts.deepinfra.model',
+      'tts.deepinfra.voice',
+      'tts.deepinfra.speed',
+      'tts.deepinfra.base_url',
+      'tts.deepinfra.language',
+      'tts.deepinfra.instructions',
+      'tts.deepinfra.response_format',
+      'tts.deepinfra.max_text_length',
+      'tts.openrouter.model',
+      'tts.openrouter.voice',
+      'tts.openrouter.speed',
+      'tts.openrouter.base_url',
+      'tts.openrouter.response_format',
+      'tts.openrouter.max_text_length',
+      'tts.neutts.model',
+      'tts.neutts.device',
+      'tts.neutts.ref_audio',
+      'tts.neutts.ref_text',
+      'tts.neutts.max_text_length',
+      'tts.kittentts.model',
+      'tts.kittentts.voice',
+      'tts.kittentts.speed',
+      'tts.kittentts.clean_text',
+      'tts.kittentts.max_text_length',
+      'tts.piper.voice',
+      'tts.piper.voices_dir',
+      'tts.piper.use_cuda',
+      'tts.piper.length_scale',
+      'tts.piper.noise_scale',
+      'tts.piper.noise_w_scale',
+      'tts.piper.volume',
+      'tts.piper.normalize_audio',
+      'tts.piper.speaker_id',
+      'tts.piper.max_text_length'
     ]
   },
   {

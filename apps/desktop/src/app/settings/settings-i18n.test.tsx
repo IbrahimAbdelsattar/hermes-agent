@@ -6,6 +6,8 @@ import { TRANSLATIONS } from '@/i18n/catalog'
 import type { Locale } from '@/i18n/types'
 
 import { ComboboxInput } from './combobox-input'
+import { SECTIONS } from './constants'
+import { fieldCopyForSchemaKey } from './field-copy'
 
 afterEach(cleanup)
 
@@ -13,7 +15,17 @@ const SHARED_LABEL_GAPS = [
   'browser.useRealProfile',
   'stt.echoTranscripts',
   'tts.deepinfra.model',
-  'tts.deepinfra.voice'
+  'tts.deepinfra.voice',
+  'tts.speed',
+  'tts.outputFormat',
+  'tts.maxTextLength',
+  'tts.streaming.minLen',
+  'tts.streaming.provider',
+  'tts.openrouter.model',
+  'tts.openrouter.voice',
+  'tts.openrouter.speed',
+  'tts.openrouter.baseUrl',
+  'tts.openrouter.maxTextLength'
 ]
 
 const SHARED_DESCRIPTION_GAPS = [
@@ -30,6 +42,16 @@ const SHARED_DESCRIPTION_GAPS = [
   'tts.xai.sampleRate',
   'tts.xai.bitRate',
   'tts.neutts.device',
+  'tts.speed',
+  'tts.outputFormat',
+  'tts.maxTextLength',
+  'tts.streaming.minLen',
+  'tts.streaming.provider',
+  'tts.openrouter.model',
+  'tts.openrouter.voice',
+  'tts.openrouter.speed',
+  'tts.openrouter.baseUrl',
+  'tts.openrouter.maxTextLength',
   'stt.echoTranscripts'
 ]
 
@@ -48,6 +70,16 @@ describe('Settings i18n', () => {
     )
 
     expect(screen.getByRole('button', { name: expectedLabel })).toBeTruthy()
+  })
+
+  it('provides labels for every TTS field in every locale', () => {
+    const ttsKeys = SECTIONS.find(section => section.id === 'voice')?.keys.filter(key => key.startsWith('tts.')) ?? []
+
+    for (const [locale, translations] of Object.entries(TRANSLATIONS)) {
+      for (const key of ttsKeys) {
+        expect(fieldCopyForSchemaKey(translations.settings.fieldLabels, key), `${locale} ${key}`).toBeDefined()
+      }
+    }
   })
 
   it('provides reported Chinese field copy without falling through to English', () => {

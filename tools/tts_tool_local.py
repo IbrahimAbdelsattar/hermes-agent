@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
-from tools.tts_tool_delivery import _finalize_wav_output, _origin, _section, _wav_sidecar_path
+from tools.tts_tool_delivery import _finalize_wav_output, _origin, _provider_speed, _section, _wav_sidecar_path
 
 logger = logging.getLogger("tools.tts_tool")
 
@@ -187,7 +187,7 @@ def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any])
     model, kt_config = _load_kittentts_model_for_config(tts_config)
     audio = model.generate(  # numpy array at 24kHz
         text, voice=kt_config.get("voice", DEFAULT_KITTENTTS_VOICE),
-        speed=kt_config.get("speed", 1.0), clean_text=kt_config.get("clean_text", True))
+        speed=_provider_speed(tts_config, "kittentts"), clean_text=kt_config.get("clean_text", True))
     import soundfile as sf
     wav_path = _wav_sidecar_path(output_path)
     sf.write(wav_path, audio, 24000)

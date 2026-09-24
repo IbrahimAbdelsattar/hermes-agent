@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authedFetch } from "@/lib/api";
-import { OPENROUTER_TTS_SPECS } from "./chat-voice";
+import { OPENROUTER_FEMALE_FISH_VOICE, OPENROUTER_MALE_FISH_VOICE, OPENROUTER_TTS_SPECS } from "./chat-voice";
 import { fetchOpenRouterSpeakUrl, speakViaOpenRouter, stopOpenRouterAudio, unlockOpenRouterAudioForGesture } from "./chat-voice-tts";
 
 vi.mock("@/lib/api", () => ({ authedFetch: vi.fn() }));
@@ -106,14 +106,28 @@ describe("fetchOpenRouterSpeakUrl", () => {
     mockAuthedFetch.mockResolvedValue(
       jsonResponse({ ok: true, data_url: "data:audio/wav;base64,AAA" }),
     );
-    await expect(fetchOpenRouterSpeakUrl("صباح الخير", "fish")).resolves.toMatchObject({
+    await expect(fetchOpenRouterSpeakUrl("صباح الخير", "fish", "jarvis")).resolves.toMatchObject({
       fallbackToFish: false,
     });
-    const body = JSON.parse(String((mockAuthedFetch.mock.calls[0][1] as RequestInit).body));
-    expect(body).toMatchObject({
+    const bodyJarvis = JSON.parse(String((mockAuthedFetch.mock.calls[0][1] as RequestInit).body));
+    expect(bodyJarvis).toMatchObject({
       provider: "openrouter",
       model_id: OPENROUTER_TTS_SPECS.fish.model_id,
-      voice_id: "b347db033a6549378b48d00acb0d06cd",
+      voice_id: OPENROUTER_MALE_FISH_VOICE,
+    });
+
+    mockAuthedFetch.mockClear();
+    mockAuthedFetch.mockResolvedValue(
+      jsonResponse({ ok: true, data_url: "data:audio/wav;base64,AAA" }),
+    );
+    await expect(fetchOpenRouterSpeakUrl("صباح الخير", "fish", "gwen")).resolves.toMatchObject({
+      fallbackToFish: false,
+    });
+    const bodyGwen = JSON.parse(String((mockAuthedFetch.mock.calls[0][1] as RequestInit).body));
+    expect(bodyGwen).toMatchObject({
+      provider: "openrouter",
+      model_id: OPENROUTER_TTS_SPECS.fish.model_id,
+      voice_id: OPENROUTER_FEMALE_FISH_VOICE,
     });
   });
 
@@ -121,11 +135,11 @@ describe("fetchOpenRouterSpeakUrl", () => {
     mockAuthedFetch.mockResolvedValue(
       jsonResponse({ ok: true, data_url: "data:audio/mpeg;base64,AAA" }),
     );
-    const result = await fetchOpenRouterSpeakUrl("صباح الخير يا هيرميس", "flux");
+    const result = await fetchOpenRouterSpeakUrl("صباح الخير يا هيرميس", "flux", "jarvis");
     expect(result?.fallbackToFish).toBe(true);
     const body = JSON.parse(String((mockAuthedFetch.mock.calls[0][1] as RequestInit).body));
     expect(body.model_id).toBe(OPENROUTER_TTS_SPECS.fish.model_id);
-    expect(body.voice_id).toBe(OPENROUTER_TTS_SPECS.fish.voice_id);
+    expect(body.voice_id).toBe(OPENROUTER_MALE_FISH_VOICE);
   });
 
   it("returns null on a failed synthesis so the caller falls back to the browser voice", async () => {

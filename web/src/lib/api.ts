@@ -54,9 +54,9 @@ function setSessionHeader(headers: Headers, token: string): void {
 // ── Global management-profile scope ──────────────────────────────────
 // The dashboard is a machine-level management surface: one header switcher
 // (ProfileProvider in App.tsx) decides which profile the management pages
-// read/write, and fetchJSON transparently appends ?profile=<name> to the
-// profile-scoped endpoint families below. "" = the dashboard process's own
-// profile (legacy behavior). Calls that already carry an explicit profile
+// read/write, and the request helpers transparently append ?profile=<name>
+// to the profile-scoped endpoint families below. "" = the dashboard process's
+// own profile (legacy behavior). Calls that already carry an explicit profile
 // (e.g. ProfileBuilder writes) are left untouched — explicit beats global.
 let _managementProfile = "";
 
@@ -97,15 +97,31 @@ const PROFILE_SCOPED_PREFIXES = [
   // consults that one — approving into the global store would grant access
   // the running gateway never sees.
   "/api/pairing",
+  "/api/audio",
 ];
+
+function isProfileScopedPath(url: string): boolean {
+  const path = url.split("?")[0];
+  return PROFILE_SCOPED_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
 
 function withManagementProfile(url: string): string {
   if (!_managementProfile) return url;
   if (url.includes("profile=")) return url; // explicit param wins
-  const path = url.split("?")[0];
-  if (!PROFILE_SCOPED_PREFIXES.some((p) => path.startsWith(p))) return url;
+  if (!isProfileScopedPath(url)) return url;
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}profile=${encodeURIComponent(_managementProfile)}`;
+}
+
+function withManagementProfileParams(
+  path: string,
+  params?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!_managementProfile || path.includes("profile=") || !isProfileScopedPath(path)) {
+    return params;
+  }
+  if (params && Object.prototype.hasOwnProperty.call(params, "profile")) return params;
+  return { ...(params ?? {}), profile: _managementProfile };
 }
 
 export async function fetchJSON<T>(
@@ -267,6 +283,7 @@ export async function authedFetch(
   url: string,
   init?: RequestInit,
 ): Promise<Response> {
+  url = withManagementProfile(url);
   const headers = new Headers(init?.headers);
   const token = window.__HERMES_SESSION_TOKEN__;
   if (token) {
@@ -299,7 +316,7 @@ export async function buildWsUrl(
   return buildHermesWebSocketUrl({
     authParam: await buildWsAuthParam(),
     basePath: BASE,
-    params,
+    params: withManagementProfileParams(path, params),
     path,
   });
 }
@@ -540,7 +557,10 @@ export const api = {
   getConfig: (profile = getManagementProfile()) =>
     fetchJSON<Record<string, unknown>>(appendProfileParam("/api/config", profile)),
   getDefaults: () => fetchJSON<Record<string, unknown>>("/api/config/defaults"),
-  getSchema: () => fetchJSON<{ fields: Record<string, unknown>; category_order: string[] }>("/api/config/schema"),
+  getSchema: (profile = getManagementProfile()) =>
+    fetchJSON<{ fields: Record<string, unknown>; category_order: string[] }>(
+      appendProfileParam("/api/config/schema", profile),
+    ),
   getModelInfo: (profile = getManagementProfile()) =>
     fetchJSON<ModelInfoResponse>(appendProfileParam("/api/model/info", profile)),
   getModelOptions: (

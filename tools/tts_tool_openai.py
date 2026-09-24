@@ -17,7 +17,7 @@ from tools.managed_tool_gateway import resolve_managed_tool_gateway
 from tools.tool_backend_helpers import (
     NOUS_MANAGED_PROVIDER, managed_nous_tools_enabled, nous_tool_gateway_unavailable_message,
     read_selection, resolve_openai_audio_api_key, selection_error)
-from tools.tts_tool_delivery import _origin, _section
+from tools.tts_tool_delivery import _origin, _provider_speed, _section
 from tools.tts_tool_providers import _tts_response_format_from_path
 
 logger = logging.getLogger("tools.tts_tool")
@@ -94,7 +94,8 @@ def _openai_extra_body(oai_config: Dict[str, Any]) -> Dict[str, Any]:
 def _generate_openai_tts(
     text: str, output_path: str, tts_config: Dict[str, Any], *, api_key: Optional[str] = None,
     base_url: Optional[str] = None, model: Optional[str] = None, voice: Optional[str] = None,
-    speed: Optional[float] = None, instructions: Optional[str] = None) -> str:
+    speed: Optional[float] = None, instructions: Optional[str] = None,
+    extra_body: Optional[Dict[str, Any]] = None) -> str:
     """Generate audio via the OpenAI ``audio.speech.create`` SDK shape.
 
     Explicit kwargs let OpenAI-compatible backends (DeepInfra) supply credentials/model/voice
@@ -115,8 +116,9 @@ def _generate_openai_tts(
     if base_url is None:  # config override beats the auth-chain fallback; explicit arg wins
         base_url = config_base_url or fallback_base or DEFAULT_OPENAI_BASE_URL
     if speed is None:
-        speed_default = tts_config.get("speed", 1.0) if isinstance(tts_config, dict) else 1.0
-        speed = float(oai_config.get("speed", speed_default))
+        speed = _provider_speed(tts_config, "openai")
+    if instructions is None:
+        instructions = oai_config.get("instructions")
     # The managed gateway only proxies MANAGED_OPENAI_TTS_MODELS; coerce a direct-OpenAI
     # model (e.g. "tts-1-hd") unless the user redirected base_url to their own endpoint.
     if is_managed and not explicit_base_url and not config_base_url and model not in MANAGED_OPENAI_TTS_MODELS:
@@ -134,8 +136,11 @@ def _generate_openai_tts(
         create_kwargs["speed"] = max(0.25, min(4.0, speed))
     if instructions:
         create_kwargs["instructions"] = instructions
-    if extra_body := _openai_extra_body(oai_config):
-        create_kwargs["extra_body"] = extra_body
+    resolved_extra_body = {} if extra_body is not None else _openai_extra_body(oai_config)
+    if extra_body:
+        resolved_extra_body.update(extra_body)
+    if resolved_extra_body:
+        create_kwargs["extra_body"] = resolved_extra_body
     client = _origin()._import_openai_client()(api_key=api_key, base_url=base_url)
     try:
         client.audio.speech.create(**create_kwargs).stream_to_file(output_path)
@@ -146,7 +151,9 @@ def _generate_openai_tts(
             close()
 
 
-def _generate_deepinfra_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+def _generate_deepinfra_tts(
+    text: str, output_path: str, tts_config: Dict[str, Any], *, instructions: Optional[str] = None,
+) -> str:
     """Resolve DeepInfra credentials/model (live ``hermes_cli.models`` catalog, no hardcoded ids), then
     delegate to the OpenAI-compatible handler."""
     api_key = _origin()._resolve_provider_key("DEEPINFRA_API_KEY", "deepinfra")
@@ -166,4 +173,6 @@ def _generate_deepinfra_tts(text: str, output_path: str, tts_config: Dict[str, A
     return _origin()._generate_openai_tts(
         text, output_path, tts_config, api_key=api_key, base_url=deepinfra_base_url(di_config),
         model=model, voice=di_config.get("voice", DEFAULT_DEEPINFRA_TTS_VOICE),
-        speed=float(di_config.get("speed", tts_config.get("speed", 1.0))))
+        speed=_provider_speed(tts_config, "deepinfra"),
+        instructions=instructions if instructions is not None else di_config.get("instructions"),
+        extra_body=_openai_extra_body(di_config))

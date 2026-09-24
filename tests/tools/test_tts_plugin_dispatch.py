@@ -167,6 +167,51 @@ class TestPluginDispatch:
         assert provider.last_call["text"] == "hello world"
         assert provider.last_call["output_path"] == "/tmp/out.mp3"
 
+    def test_canonical_provider_settings_override_global_fallbacks(self):
+        provider = _FakeTTSProvider(name="cartesia")
+        tts_registry.register_provider(provider)
+        config = {
+            "voice": "global-voice",
+            "model": "global-model",
+            "speed": 0.8,
+            "output_format": "mp3",
+            "providers": {
+                "cartesia": {
+                    "voice": "provider-voice",
+                    "model": "provider-model",
+                    "speed": 1.25,
+                    "output_format": "wav",
+                },
+            },
+        }
+
+        tts_tool._dispatch_to_plugin_provider(
+            text="hello", output_path="/tmp/out.wav", provider="cartesia", tts_config=config,
+        )
+
+        assert provider.last_call["kwargs"] == {
+            "voice": "provider-voice", "model": "provider-model", "speed": 1.25, "format": "wav",
+        }
+
+    def test_missing_canonical_settings_fall_back_to_global(self):
+        provider = _FakeTTSProvider(name="cartesia")
+        tts_registry.register_provider(provider)
+        config = {
+            "voice": "global-voice",
+            "model": "global-model",
+            "speed": 0.8,
+            "output_format": "flac",
+            "providers": {"cartesia": {}},
+        }
+
+        tts_tool._dispatch_to_plugin_provider(
+            text="hello", output_path="/tmp/out.flac", provider="cartesia", tts_config=config,
+        )
+
+        assert provider.last_call["kwargs"] == {
+            "voice": "global-voice", "model": "global-model", "speed": 0.8, "format": "flac",
+        }
+
     def test_unregistered_name_returns_none(self):
         result = tts_tool._dispatch_to_plugin_provider(
             text="hello",

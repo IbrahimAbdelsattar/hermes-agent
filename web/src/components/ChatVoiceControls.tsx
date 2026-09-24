@@ -441,7 +441,7 @@ export function ChatVoiceControls({
         if (fastDecision && fastDecision.bypass_llm) {
           setStatus(`Jev: ${fastDecision.route}`);
           if (speechEnabledRef.current && fastDecision.spoken_confirmation) {
-            void speakWithNabra(fastDecision.spoken_confirmation, persona, false);
+            void speakWithNabra(fastDecision.spoken_confirmation, persona, true);
           }
           void executeJevFastPath(fastDecision);
           waitingForReplyRef.current = false;
@@ -463,9 +463,12 @@ export function ChatVoiceControls({
               persona,
             );
             if (decision.bypass_llm && decision.confidence >= 0.85) {
+              if (assistantBusyRef.current || waitingForReplyRef.current || speakingRef.current) {
+                return;
+              }
               setStatus(`Jev: ${decision.route} (${decision.provider})`);
               if (speechEnabledRef.current && decision.spoken_confirmation) {
-                void speakWithNabra(decision.spoken_confirmation, persona, false);
+                void speakWithNabra(decision.spoken_confirmation, persona, true);
               }
               void executeJevFastPath(decision);
             }
@@ -612,6 +615,7 @@ export function ChatVoiceControls({
           if (result.text) speechQueueRef.current.unshift(result.text);
           speechQueueRef.current.push(...remaining);
           pipeline.cancel();
+          stopOpenRouterAudio();
           break;
         }
       }

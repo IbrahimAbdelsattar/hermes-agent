@@ -51,6 +51,20 @@ class TestOpenaiBackendInstructions:
         create = self._run(tmp_path, monkeypatch, instructions="")
         assert "instructions" not in create.call_args[1]
 
+    def test_config_instructions_are_forwarded(self, tmp_path, monkeypatch):
+        create = self._run(
+            tmp_path, monkeypatch, tts_config={"openai": {"instructions": "Speak brightly."}},
+        )
+        assert create.call_args[1]["instructions"] == "Speak brightly."
+
+    def test_call_instructions_override_config(self, tmp_path, monkeypatch):
+        create = self._run(
+            tmp_path, monkeypatch,
+            tts_config={"openai": {"instructions": "Speak brightly."}},
+            instructions="Whisper.",
+        )
+        assert create.call_args[1]["instructions"] == "Whisper."
+
 
 # ---------------------------------------------------------------------------
 # Tool-level plumbing (text_to_speech_tool -> _generate_openai_tts)

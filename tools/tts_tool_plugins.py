@@ -5,13 +5,15 @@ tool module stays importable without the plugin machinery).
 """
 
 from __future__ import annotations
-
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
+from agent.tts_provider import VALID_OUTPUT_FORMATS
 from tools.tts_command_provider import (
     BUILTIN_TTS_PROVIDERS, DEFAULT_COMMAND_TTS_OUTPUT_FORMAT, _get_named_provider_config,
     _is_command_provider_config)
+from tools.tts_tool_delivery import _configured_output_format, _provider_config, _provider_speed
 
 logger = logging.getLogger("tools.tts_tool")
 
@@ -56,16 +58,24 @@ def _dispatch_to_plugin_provider(text: str, output_path: str, provider: str, tts
         return None
     if plugin_provider is None:
         return None
-    # voice/model/speed/format are optional per TTSProvider.synthesize; providers default on None.
     cfg = tts_config if isinstance(tts_config, dict) else {}
-    voice, model, speed = cfg.get("voice"), cfg.get("model"), cfg.get("speed")
-    fmt = cfg.get("output_format", DEFAULT_COMMAND_TTS_OUTPUT_FORMAT)
+    provider_cfg = _provider_config(cfg, key)
+
+    def _setting(name: str):
+        value = provider_cfg.get(name)
+        return value if value not in (None, "") else cfg.get(name)
+
+    voice = _setting("voice")
+    model = _setting("model")
+    speed = _provider_speed(cfg, key)
+    output_format = _configured_output_format(cfg, key) or DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
+    output_suffix = Path(output_path).suffix.lower().strip().lstrip(".")
+    if output_suffix in VALID_OUTPUT_FORMATS:
+        output_format = output_suffix
     logger.info("Generating speech with plugin TTS provider '%s'...", key)
     written = plugin_provider.synthesize(
-        text, output_path, voice=voice if isinstance(voice, str) and voice else None,
-        model=model if isinstance(model, str) and model else None,
-        speed=float(speed) if isinstance(speed, (int, float)) else None,
-        format=str(fmt).lower() if fmt else "mp3")
+        text, output_path, voice=str(voice) if voice else None,
+        model=str(model) if model else None, speed=float(speed), format=output_format)
     return written if isinstance(written, str) and written else output_path
 
 

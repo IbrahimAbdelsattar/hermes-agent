@@ -11,8 +11,9 @@ import { toLiveHistory } from '@/lib/voice-live'
 import { clearWakeIndicator, syncWakeIndicatorWithVoice } from '@/lib/wake-indicator'
 import { $voiceConversationStartRequest, takeVoiceConversationStart } from '@/store/composer'
 import { resetBrowseState } from '@/store/composer-input-history'
-import { $gateway } from '@/store/gateway'
+import { $gateway, activeGatewayConnectionId } from '@/store/gateway'
 import { notify, notifyError } from '@/store/notifications'
+import { $activeGatewayProfile } from '@/store/profile'
 import { $voiceLiveStatus, refreshVoiceLiveStatus, selectedVoiceChatMode } from '@/store/voice-live'
 import { $autoSpeakReplies, $voiceStopPhrase, setAutoSpeakReplies } from '@/store/voice-prefs'
 import { resumeWakeAfterVoice } from '@/store/wake-word'
@@ -67,7 +68,17 @@ export function useComposerVoice({
 }: UseComposerVoiceArgs) {
   const { t } = useI18n()
   // A tile's composer speaks ITS transcript, not the primary chat's.
-  const { $messages } = useComposerScope()
+  const { $messages, connectionId, profile } = useComposerScope()
+  useStore($gateway)
+  const activeProfile = useStore($activeGatewayProfile)
+  const activeConnectionId = activeGatewayConnectionId()
+  const leaseConnectionId = connectionId || activeConnectionId || 'local'
+  const leaseProfile = profile || activeProfile
+
+  const leaseOwner = useMemo(
+    () => ({ connectionId: leaseConnectionId, profile: leaseProfile }),
+    [leaseConnectionId, leaseProfile]
+  )
 
   // Wake the voice loop once when a pending reply first becomes speakable,
   // without re-rendering the composer for every streamed token. The live
@@ -388,19 +399,22 @@ export function useComposerVoice({
   // lease, and the backend unloads resident local models once no surface holds
   // one. Fire-and-forget — the toggle never waits on or fails from this.
   useEffect(() => {
-    void syncTtsLease(CONVERSATION_LEASE, voiceConversationActive && !liveEngineActive)
-  }, [liveEngineActive, voiceConversationActive])
+    const active = voiceConversationActive && !liveEngineActive
 
-  useEffect(() => () => void syncTtsLease(CONVERSATION_LEASE, false), [])
+    void syncTtsLease(CONVERSATION_LEASE, active, leaseOwner)
 
-  // "Read replies aloud" is the same signal, held for as long as the toggle is
-  // on (it mirrors voice.auto_tts, so this also warms at startup when the
-  // preference is already set).
+    return () => void syncTtsLease(CONVERSATION_LEASE, false, leaseOwner)
+  }, [leaseOwner, liveEngineActive, voiceConversationActive])
+
+  // "Read replies aloud" is the same signal, held for as long as the local
+  // preference is on (including its one-time voice.auto_tts migration).
   const autoSpeakReplies = useStore($autoSpeakReplies)
 
   useEffect(() => {
-    void syncTtsLease(READ_ALOUD_LEASE, autoSpeakReplies)
-  }, [autoSpeakReplies])
+    void syncTtsLease(READ_ALOUD_LEASE, autoSpeakReplies, leaseOwner)
+
+    return () => void syncTtsLease(READ_ALOUD_LEASE, false, leaseOwner)
+  }, [autoSpeakReplies, leaseOwner])
 
   // Explicit start/end for the on-screen conversation controls (the hotkey uses
   // the gated toggle above).

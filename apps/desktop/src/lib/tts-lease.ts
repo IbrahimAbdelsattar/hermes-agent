@@ -1,4 +1,5 @@
-import { setTtsLease } from '@/hermes'
+import type { OwnerScope } from '@/api/client'
+import { getApiRequestConnection, getApiRequestProfile, setTtsLease } from '@/hermes'
 
 // The desktop's speech-output toggles — "Read replies aloud" and voice
 // conversation mode — are the user telling us TTS is about to be needed (or no
@@ -21,6 +22,13 @@ const RENDERER_ID = Math.random().toString(36).slice(2, 10)
 export const READ_ALOUD_LEASE = 'desktop:read-aloud'
 export const CONVERSATION_LEASE = `desktop:conversation:${RENDERER_ID}`
 
+function leaseStateKey(lease: string, owner?: OwnerScope): string {
+  const connectionId = owner?.connectionId || getApiRequestConnection() || 'primary'
+  const profile = owner?.profile || getApiRequestProfile() || 'default'
+
+  return `${connectionId}::${profile}::${lease}`
+}
+
 const sent = new Map<string, boolean>()
 const inFlight = new Map<string, Promise<void>>()
 
@@ -30,41 +38,42 @@ const inFlight = new Map<string, Promise<void>>()
  * ever acquired) is also skipped — releasing a lease we never held would only
  * churn the backend on app start.
  */
-export function syncTtsLease(lease: string, active: boolean): Promise<void> {
-  const last = sent.get(lease)
+export function syncTtsLease(lease: string, active: boolean, owner?: OwnerScope): Promise<void> {
+  const key = leaseStateKey(lease, owner)
+  const last = sent.get(key)
 
   if (last === active || (last === undefined && !active)) {
-    return inFlight.get(lease) ?? Promise.resolve()
+    return inFlight.get(key) ?? Promise.resolve()
   }
 
-  sent.set(lease, active)
+  sent.set(key, active)
 
-  const previous = inFlight.get(lease) ?? Promise.resolve()
+  const previous = inFlight.get(key) ?? Promise.resolve()
 
   const next = previous
     .then(async () => {
       // Latest intent wins: if the toggle flipped again while we were queued,
       // the newer call sends its own state and this one has nothing to say.
-      if (sent.get(lease) !== active) {
+      if (sent.get(key) !== active) {
         return
       }
 
-      await setTtsLease(lease, active)
+      await setTtsLease(lease, active, owner)
     })
     .catch(() => {
       // Backend not up yet / older backend without the endpoint / warm-up
       // failure: forget what we "sent" so the next flip retries honestly.
-      if (sent.get(lease) === active) {
-        sent.delete(lease)
+      if (sent.get(key) === active) {
+        sent.delete(key)
       }
     })
     .finally(() => {
-      if (inFlight.get(lease) === next) {
-        inFlight.delete(lease)
+      if (inFlight.get(key) === next) {
+        inFlight.delete(key)
       }
     })
 
-  inFlight.set(lease, next)
+  inFlight.set(key, next)
 
   return next
 }

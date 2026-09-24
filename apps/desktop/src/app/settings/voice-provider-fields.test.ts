@@ -1,34 +1,64 @@
 import { describe, expect, it } from 'vitest'
 
-import { ENUM_OPTIONS, FREE_INPUT_KEYS, SECTIONS } from './constants'
+import {
+  BUILTIN_TTS_PROVIDER_KEYS,
+  CURATED_FIELD_SCHEMAS,
+  ENUM_OPTIONS,
+  FIELD_DESCRIPTIONS,
+  FIELD_LABELS,
+  FREE_INPUT_KEYS,
+  SECTIONS
+} from './constants'
+import { fieldCopyForSchemaKey } from './field-copy'
 import { voiceProviderKeys } from './voice-provider-fields'
 
 const voiceKeys = SECTIONS.find(s => s.id === 'voice')?.keys ?? []
 
 describe('voiceProviderKeys', () => {
   it('derives per-provider field keys from the curated Voice section', () => {
-    expect(voiceProviderKeys('tts', 'openai')).toEqual(['tts.openai.model', 'tts.openai.voice'])
-    expect(voiceProviderKeys('tts', 'elevenlabs')).toEqual(['tts.elevenlabs.voice_id', 'tts.elevenlabs.model_id'])
-    expect(voiceProviderKeys('tts', 'edge')).toEqual(['tts.edge.voice'])
+    expect(voiceProviderKeys('tts', 'openai')).toEqual([
+      'tts.openai.model',
+      'tts.openai.voice',
+      'tts.openai.speed',
+      'tts.openai.base_url',
+      'tts.openai.language',
+      'tts.openai.instructions',
+      'tts.openai.response_format',
+      'tts.openai.consent_attestation',
+      'tts.openai.pcm_sample_rate',
+      'tts.openai.max_text_length'
+    ])
+    expect(voiceProviderKeys('tts', 'elevenlabs')).toEqual([
+      'tts.elevenlabs.voice_id',
+      'tts.elevenlabs.model_id',
+      'tts.elevenlabs.speed',
+      'tts.elevenlabs.streaming_model_id',
+      'tts.elevenlabs.base_url',
+      'tts.elevenlabs.wss_url',
+      'tts.elevenlabs.max_text_length'
+    ])
+    expect(voiceProviderKeys('tts', 'edge')).toEqual([
+      'tts.edge.voice',
+      'tts.edge.speed',
+      'tts.edge.max_text_length'
+    ])
+    expect(voiceProviderKeys('tts', 'openrouter')).toEqual([
+      'tts.openrouter.model',
+      'tts.openrouter.voice',
+      'tts.openrouter.speed',
+      'tts.openrouter.base_url',
+      'tts.openrouter.response_format',
+      'tts.openrouter.max_text_length'
+    ])
   })
 
   it('covers every built-in TTS provider the Capabilities picker offers', () => {
     // Every provider key the backend TOOL_CATEGORIES["tts"] rows can carry
     // (tts_provider values) must resolve to at least one config field, so the
     // Capabilities panel never renders a silently-empty settings block.
-    for (const provider of [
-      'edge',
-      'openai',
-      'xai',
-      'elevenlabs',
-      'mistral',
-      'gemini',
-      'kittentts',
-      'piper',
-      'deepinfra',
-      'minimax'
-    ]) {
+    for (const provider of BUILTIN_TTS_PROVIDER_KEYS) {
       expect(voiceProviderKeys('tts', provider).length, provider).toBeGreaterThan(0)
+      expect(ENUM_OPTIONS['tts.provider'], provider).toContain(provider)
     }
   })
 
@@ -56,7 +86,9 @@ describe('voice field option coverage', () => {
       'stt.openai.model',
       'tts.edge.voice',
       'tts.xai.voice_id',
-      'tts.piper.voice'
+      'tts.piper.voice',
+      'tts.openrouter.model',
+      'tts.openrouter.voice'
     ]) {
       expect(FREE_INPUT_KEYS.has(key), key).toBe(true)
     }
@@ -71,6 +103,44 @@ describe('voice field option coverage', () => {
     expect(FREE_INPUT_KEYS.has('tts.provider')).toBe(false)
     expect(FREE_INPUT_KEYS.has('tts.neutts.device')).toBe(false)
     expect(FREE_INPUT_KEYS.has('stt.provider')).toBe(false)
+  })
+
+  it('curates global and advanced TTS controls without exposing provider secrets', () => {
+    for (const key of [
+      'tts.speed',
+      'tts.output_format',
+      'tts.max_text_length',
+      'tts.streaming.min_len',
+      'tts.streaming.provider',
+      'tts.openrouter.model',
+      'tts.openrouter.voice',
+      'tts.openrouter.speed',
+      'tts.openrouter.base_url',
+      'tts.openrouter.max_text_length',
+      'tts.piper.length_scale',
+      'tts.gemini.persona_prompt_file'
+    ]) {
+      expect(voiceKeys, key).toContain(key)
+      expect(fieldCopyForSchemaKey(FIELD_LABELS, key), key).toBeDefined()
+      expect(fieldCopyForSchemaKey(FIELD_DESCRIPTIONS, key), key).toBeDefined()
+    }
+
+    for (const key of [
+      'tts.speed',
+      'tts.output_format',
+      'tts.max_text_length',
+      'tts.streaming.provider',
+      'tts.openrouter.speed',
+      'tts.piper.length_scale'
+    ]) {
+      expect(CURATED_FIELD_SCHEMAS[key as keyof typeof CURATED_FIELD_SCHEMAS], key).toBeDefined()
+    }
+
+    for (const key of voiceKeys.filter(key => key === 'tts.max_text_length' || key.endsWith('.max_text_length'))) {
+      expect(CURATED_FIELD_SCHEMAS[key]?.type, key).toBe('number')
+    }
+
+    expect(voiceKeys.some(key => key.endsWith('.api_key'))).toBe(false)
   })
 
   it('every free-input voice key that lives in the Voice section has suggestions or is intentionally bare', () => {

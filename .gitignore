@@ -87,6 +87,8 @@ hermes_cli/web_dist/
 .web_ui_build.lock
 apps/desktop/build/
 apps/desktop/dist/
+.agents/*
+.delegate-briefs/*
 
 # tsc-emitted artifacts (a stray `tsc -b` compiles into src/, and vite then
 # resolves the stale .js OVER the .tsx — never track these)
@@ -307,4 +309,3 @@ native/fts5_cjk/*.so
 # Regenerable static index; never an artifact of the repo.
 .graphify/
 scratch/
-.delegate-briefs/

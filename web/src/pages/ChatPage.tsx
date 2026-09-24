@@ -548,6 +548,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     return true;
   }, []);
 
+  const handleModelChange = useCallback((model: string, provider?: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const cmd = provider ? `/model ${model} --provider ${provider}` : `/model ${model}`;
+    ws.send(`\x15${cmd}`);
+    window.setTimeout(() => {
+      if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send("\r");
+      }
+    }, 100);
+    termRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     // Don't spawn the chat PTY (and the TUI/agent bootstrap it triggers)
     // until the chat tab has been activated. Prevents the persistently
@@ -1882,6 +1895,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 profile={scopedProfile}
                 onDashboardNewSessionRequest={startFreshDashboardChat}
                 onSessionTitleChange={handleSessionTitleChange}
+                onModelChange={handleModelChange}
               />
             </div>
             <ChatSessionList
@@ -2095,6 +2109,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 profile={scopedProfile}
                 onDashboardNewSessionRequest={startFreshDashboardChat}
                 onSessionTitleChange={handleSessionTitleChange}
+                onModelChange={handleModelChange}
               />
             </div>
 

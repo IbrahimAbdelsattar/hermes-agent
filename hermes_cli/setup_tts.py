@@ -70,6 +70,13 @@ def _install_kittentts_deps() -> bool:
         "kittentts", ["-U", wheel_url, "soundfile", "--quiet"], f"uv pip install -U '{wheel_url}' soundfile")
 
 
+def _install_piper_deps() -> bool:
+    """Install Piper with user approval. Returns True on success."""
+    _setup._info(None, "Installing piper-tts (voices download on first use)...", None)
+    return _pip_install_tts_package(
+        "Piper", ["-U", "piper-tts", "--quiet"], "uv pip install -U piper-tts")
+
+
 def _xai_oauth_logged_in_for_setup() -> bool:
     """True iff xAI Grok OAuth credentials are stored locally, so TTS/STT setup can skip the
     API-key prompt for users who logged in via ``hermes model`` -> xAI Grok OAuth."""
@@ -114,9 +121,11 @@ _TTS_PROVIDER_CHOICES = [
     ("minimax", "MiniMax TTS (high quality with voice cloning, needs API key)"),
     ("mistral", "Mistral Voxtral TTS (multilingual, native Opus, needs API key)"),
     ("gemini", "Google Gemini TTS (30 prebuilt voices, prompt-controllable, needs API key)"),
+    ("deepinfra", "DeepInfra TTS (live model catalog, needs API key)"),
     ("openrouter", "OpenRouter TTS (Flux / Fish Audio free voices, needs API key)"),
     ("neutts", "NeuTTS (local on-device, free, ~300MB model download)"),
-    ("kittentts", "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)")]
+    ("kittentts", "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)"),
+    ("piper", "Piper (local on-device, free, multilingual neural voices)")]
 # Short label = menu label minus its parenthetical ("Edge TTS", "Mistral Voxtral TTS", ...).
 _TTS_PROVIDER_LABELS = {key: label.split(" (")[0] for key, label in _TTS_PROVIDER_CHOICES}
 # provider -> (env vars that satisfy it, env var to save, prompt, success line, pre-prompt hint)
@@ -125,12 +134,14 @@ _TTS_API_KEY_PROVIDERS = {
                    "ElevenLabs API key saved", ""),
     "openai": (("VOICE_TOOLS_OPENAI_KEY", "OPENAI_API_KEY"), "VOICE_TOOLS_OPENAI_KEY",
                "OpenAI API key for TTS", "OpenAI TTS API key saved", ""),
-    "minimax": (("MINIMAX_API_KEY",), "MINIMAX_API_KEY", "MiniMax API key for TTS",
+    "minimax": (("MINIMAX_API_KEY", "MINIMAX_CN_API_KEY"), "MINIMAX_API_KEY", "MiniMax API key for TTS",
                 "MiniMax TTS API key saved", ""),
     "mistral": (("MISTRAL_API_KEY",), "MISTRAL_API_KEY", "Mistral API key for TTS",
                 "Mistral TTS API key saved", ""),
     "gemini": (("GEMINI_API_KEY", "GOOGLE_API_KEY"), "GEMINI_API_KEY", "Gemini API key for TTS",
                "Gemini TTS API key saved", "Get a free API key at https://aistudio.google.com/app/apikey"),
+    "deepinfra": (("DEEPINFRA_API_KEY",), "DEEPINFRA_API_KEY", "DeepInfra API key for TTS",
+                  "DeepInfra TTS API key saved", "Get a key at https://deepinfra.com/dash/api_keys"),
     "openrouter": (("OPENROUTER_API_KEY",), "OPENROUTER_API_KEY", "OpenRouter API key for TTS",
                    "OpenRouter TTS API key saved", "Get a key at https://openrouter.ai/keys"),
 }
@@ -141,9 +152,13 @@ _TTS_LOCAL_PROVIDERS = {
                 "  • System package: espeak-ng (phonemizer)"),
                "Install NeuTTS dependencies now?", _install_neutts_deps),
     "kittentts": ("kittentts", "KittenTTS",
-                  ("KittenTTS is lightweight (~25-80MB, CPU-only, no API key required).",
-                   "Voices: Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo"),
-                  "Install KittenTTS now?", _install_kittentts_deps)}
+                   ("KittenTTS is lightweight (~25-80MB, CPU-only, no API key required).",
+                    "Voices: Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo"),
+                   "Install KittenTTS now?", _install_kittentts_deps),
+    "piper": ("piper", "Piper",
+              ("Piper is a local neural TTS engine with multilingual voices.",
+               "Voice models (~20-90MB) download on first use."),
+              "Install Piper now?", _install_piper_deps)}
 
 
 def _tts_api_key_step(selected: str) -> str:

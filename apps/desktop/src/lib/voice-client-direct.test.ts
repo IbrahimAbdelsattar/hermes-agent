@@ -7,6 +7,7 @@ import {
   cutSentences,
   type DirectTtsConfig,
   fetchVoiceClientConfig,
+  splitTextForClientDirect,
   synthesizeSpeechClientDirect,
   transcribeAudioClientDirect,
   transcriptFromOpenAiMultipartBody
@@ -267,6 +268,21 @@ describe('transcribeAudioClientDirect', () => {
   })
 })
 
+describe('splitTextForClientDirect', () => {
+  it('splits on words without dropping text', () => {
+    expect(splitTextForClientDirect('one two three four', 8)).toEqual(['one two', 'three', 'four'])
+  })
+
+  it('hard-splits an oversized token or CJK run', () => {
+    expect(splitTextForClientDirect('abcdefgh', 3)).toEqual(['abc', 'def', 'gh'])
+    expect(splitTextForClientDirect('第一第二第三', 2)).toEqual(['第一', '第二', '第三'])
+  })
+
+  it('treats a positive fractional limit below one character as unset', () => {
+    expect(splitTextForClientDirect('abcdefgh', 0.5)).toEqual(['abcdefgh'])
+  })
+})
+
 describe('synthesizeSpeechClientDirect', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -309,6 +325,57 @@ describe('synthesizeSpeechClientDirect', () => {
     expect(body.consent_attestation).toBe('I own this voice')
   })
 
+  it('sends resolved speed for DeepInfra and OpenRouter', async () => {
+    for (const provider of ['deepinfra', 'openrouter']) {
+      const fetchMock = vi.fn(async () => new Response(new ArrayBuffer(1), { status: 200 }))
+
+      vi.stubGlobal('fetch', fetchMock)
+      await synthesizeSpeechClientDirect({ ...openaiTts, provider, speed: 1.35 }, 'Hi.')
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+
+      expect(body.speed).toBe(1.35)
+    }
+  })
+
+  it('forwards configured response format and OpenAI instructions', async () => {
+    const fetchMock = vi.fn(async () => new Response(new ArrayBuffer(1), { status: 200 }))
+
+    vi.stubGlobal('fetch', fetchMock)
+    await synthesizeSpeechClientDirect(
+      { ...openaiTts, instructions: 'Speak warmly.', response_format: 'wav' },
+      'Hello.'
+    )
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>
+
+    expect(body.response_format).toBe('wav')
+    expect(body.instructions).toBe('Speak warmly.')
+  })
+
+  it('wraps raw PCM responses as playable WAV bytes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 })))
+
+    const audio = await synthesizeSpeechClientDirect({ ...openaiTts, response_format: 'pcm' }, 'Hi.')
+    const bytes = new Uint8Array(audio)
+
+    expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe('RIFF')
+    expect(new TextDecoder().decode(bytes.slice(8, 12))).toBe('WAVE')
+    expect(bytes).toHaveLength(48)
+  })
+
+  it('rejects an oversized direct request instead of truncating it', async () => {
+    const fetchMock = vi.fn()
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      synthesizeSpeechClientDirect({ ...openaiTts, max_text_length: 4 }, '12345')
+    ).rejects.toThrow(/4-character provider limit/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('speaks the elevenlabs tts shape with the voice in the path', async () => {
     const fetchMock = vi.fn(async () => new Response(new ArrayBuffer(4), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
@@ -328,6 +395,27 @@ describe('synthesizeSpeechClientDirect', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('https://api.elevenlabs.io/v1/text-to-speech/voice123')
     expect((init.headers as Record<string, string>)['xi-api-key']).toBe('sk_tts')
+  })
+
+  it('forwards ElevenLabs speed on the text-to-speech endpoint', async () => {
+    const fetchMock = vi.fn(async () => new Response(new ArrayBuffer(4), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await synthesizeSpeechClientDirect(
+      {
+        ...openaiTts,
+        wire: 'elevenlabs-tts',
+        provider: 'elevenlabs',
+        base_url: 'https://api.elevenlabs.io/v1',
+        model: 'eleven_turbo_v2',
+        voice: 'voice123',
+        speed: 1.2
+      },
+      'Hi.'
+    )
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string]
+    expect(new URL(url).searchParams.get('speed')).toBe('1.2')
   })
 
   it('throws on provider rejection', async () => {

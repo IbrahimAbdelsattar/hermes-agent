@@ -163,4 +163,18 @@ describe('speechUtils - Streaming Sentence Pipeline', () => {
     const gwenAr = pickArabicVoice(mockVoices, 'gwen');
     expect(gwenAr?.name).toContain('Salma');
   });
+
+  it('never assigns Google عربي or unverified female voices to Jarvis', () => {
+    const chromeVoices = [
+      { name: 'Google عربي', lang: 'ar-XA' } as SpeechSynthesisVoice,
+      { name: 'Google US English', lang: 'en-US' } as SpeechSynthesisVoice,
+    ];
+
+    // Jarvis must return undefined so speakWithNabra falls through to authentic male backend voices
+    expect(pickArabicVoice(chromeVoices, 'jarvis')).toBeUndefined();
+    expect(pickEnglishVoice(chromeVoices, 'jarvis')).toBeUndefined();
+
+    // Gwen correctly picks Google عربي as female voice
+    expect(pickArabicVoice(chromeVoices, 'gwen')?.name).toBe('Google عربي');
+  });
 });

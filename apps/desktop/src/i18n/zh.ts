@@ -1,4 +1,8 @@
-import { defineFieldCopy } from '@/app/settings/field-copy'
+import {
+  FIELD_DESCRIPTIONS as DEFAULT_FIELD_DESCRIPTIONS,
+  FIELD_LABELS as DEFAULT_FIELD_LABELS
+} from '@/app/settings/constants'
+import { mergeFieldCopy } from '@/app/settings/field-copy'
 
 import { defineLocale } from './define-locale'
 
@@ -868,7 +872,7 @@ export const zh = defineLocale({
         turnOffFailed: '无法关闭宠物。'
       }
     },
-    fieldLabels: defineFieldCopy({
+    fieldLabels: mergeFieldCopy(DEFAULT_FIELD_LABELS, {
       model: '默认模型',
       modelContextLength: '仅覆盖主聊天模型检测到的上下文窗口（以 token 计）。保持为 0 则使用所选模型检测到的值。不影响辅助模型/MoA 模型。',
       fallbackProviders: '备用模型',
@@ -932,7 +936,17 @@ export const zh = defineLocale({
       voice: {
         recordKey: '语音快捷键',
         maxRecordingSeconds: '最长录音时长',
-        autoTts: '朗读回复',
+        autoTts: '后端自动 TTS',
+        clientDirect: '直连提供方',
+        beepEnabled: '录音提示音',
+        beepVolume: '录音提示音音量',
+        thinkingSound: '思考提示音',
+        silenceThreshold: '录音静音阈值',
+        silenceDuration: '录音静音时长',
+        bargeIn: '语音打断',
+        bargeInGraceSeconds: '语音打断宽限期',
+        bargeInThresholdMultiplier: '语音打断阈值倍率',
+        stopPhrases: '语音停止短语',
         voiceChatMode: '语音聊天模式',
         gptLive: {
           voice: 'GPT-Live 音色',
@@ -965,6 +979,13 @@ export const zh = defineLocale({
       },
       tts: {
         provider: '文字转语音提供方',
+        speed: '默认播放速度',
+        outputFormat: '默认输出格式',
+        maxTextLength: '默认文本长度上限',
+        streaming: {
+          minLen: '流式语句最小字符数',
+          provider: '流式提供方'
+        },
         edge: {
           voice: 'Edge 语音'
         },
@@ -1011,6 +1032,13 @@ export const zh = defineLocale({
         },
         piper: {
           voice: 'Piper 语音'
+        },
+        openrouter: {
+          model: 'OpenRouter TTS 模型',
+          voice: 'OpenRouter 音色',
+          speed: 'OpenRouter 播放速度',
+          baseUrl: 'OpenRouter 基础 URL',
+          maxTextLength: 'OpenRouter 文本上限'
         }
       },
       memory: {
@@ -1047,7 +1075,7 @@ export const zh = defineLocale({
         nonInteractiveLocalChanges: '应用内更新本地更改'
       }
     }),
-    fieldDescriptions: defineFieldCopy({
+    fieldDescriptions: mergeFieldCopy(DEFAULT_FIELD_DESCRIPTIONS, {
       model: '用于新对话，除非你在输入框中选择其他模型。',
       modelContextLength: '保持为 0 则使用所选模型检测到的上下文窗口。',
       fallbackProviders: '默认模型失败时尝试的备用 provider:model 条目。',
@@ -1109,7 +1137,8 @@ export const zh = defineLocale({
           '本地浏览使用你的真实登录状态。Hermes 会把你默认浏览器的配置（Cookie、登录、偏好）复制为受管快照，并用自带的 Chromium 驱动它——不会直接打开你的实时配置，且每次运行都会从实时配置刷新副本。还允许智能体在配置了云端浏览器后端时，按需打开本地真实配置会话。仅支持 Chromium 系浏览器（Chrome、Edge、Brave、Brave Origin、Chromium）；默认浏览器不是 Chromium 系时会给出明确报错。默认关闭。'
       },
       voice: {
-        autoTts: '自动朗读助手回复。',
+        autoTts: '后端默认设置，用于 CLI 和消息网关自动朗读语音回复。桌面的“朗读回复”仍是独立的本地偏好。',
+        clientDirect: '远程连接时，让桌面直接调用当前配置的语音提供方，而不通过网关中继音频。',
         voiceChatMode:
           'chained：语音转文字 → Hermes → 文字转语音，使用下方的提供商。gpt-live：一个全双工的 OpenAI 语音模型（gpt-live-1）负责听和说，并把每个实际请求交给 Hermes——由你选择的任意模型带着完整工具集作答。需要 OpenAI API 密钥；语音层按每分钟 $0.05 计费。',
         gptLive: {
@@ -1125,6 +1154,20 @@ export const zh = defineLocale({
         }
       },
       tts: {
+        speed: '提供方未单独设置时的回退播放速度。1.0 为正常速度。',
+        outputFormat: '合成音频的默认容器格式；仍以提供方支持的格式为准。',
+        maxTextLength: '单次 TTS 请求的默认字符上限；更长文本会拆分而不会截断。',
+        streaming: {
+          minLen: '流式语音可以单独播放的最短首句字符数。',
+          provider: '固定流式提供方、选择自动检测，或留空跟随当前 TTS 提供方。'
+        },
+        openrouter: {
+          model: 'OpenRouter TTS 模型 ID；内置建议之外也可自由输入新模型。',
+          voice: '所选 OpenRouter TTS 模型接受的音色 ID。',
+          speed: '支持速度设置的模型所用的播放速度。1.0 为正常速度。',
+          baseUrl: '可选的 OpenRouter TTS 端点。',
+          maxTextLength: 'OpenRouter 单次请求字符上限；更长文本会拆分。'
+        },
         xai: {
           voiceId: 'xAI 语音 ID（如 eve）或自定义语音 ID。',
           language: '口语语言代码（如 en、pt-BR），或填 "auto" 自动检测。',

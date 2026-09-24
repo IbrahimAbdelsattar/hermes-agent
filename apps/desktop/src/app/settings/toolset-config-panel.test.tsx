@@ -9,6 +9,7 @@ import type { ToolsetConfig } from '@/types/hermes'
 
 // Collect the component graph before the behavioral test deadline starts.
 import { ToolsetConfigPanel } from './toolset-config-panel'
+import { VoiceProviderFields } from './voice-provider-fields'
 
 // EnvVarField navigates to Settings → Keys via useNavigate, so every render
 // needs a router context. The navigate spy asserts the deep-link target.
@@ -63,11 +64,11 @@ vi.mock('@/hermes', () => ({
   getActionStatus: (name: string, lines?: number) => getActionStatus(name, lines),
   startOAuthLogin: (providerId: string) => startOAuthLogin(providerId),
   pollOAuthSession: (providerId: string, sessionId: string) => pollOAuthSession(providerId, sessionId),
-  getHermesConfigRecord: () => getHermesConfigRecord(),
-  getHermesConfigSchema: () => getHermesConfigSchema(),
+  getHermesConfigRecord: (profile?: unknown) => getHermesConfigRecord(profile),
+  getHermesConfigSchema: (profile?: unknown) => getHermesConfigSchema(profile),
   saveHermesConfig: (config: unknown) => saveHermesConfig(config),
   saveHermesConfigRecord: (config: unknown, profile?: unknown) => saveHermesConfigRecord(config, profile),
-  getElevenLabsVoices: () => getElevenLabsVoices(),
+  getElevenLabsVoices: (profile?: unknown) => getElevenLabsVoices(profile),
   // use-config-record keys its query cache by scope via profileScopeKey; a
   // scoped panel reaches it, so the full-replacement mock must provide it.
   profileScopeKey: (scope?: { profile?: string; connectionId?: string } | string) =>
@@ -78,7 +79,9 @@ vi.mock('@/hermes', () => ({
   // normalizeProfileKey import) calls this at module-init; the full-replacement
   // mock must provide it or the module graph throws on load.
   setApiRequestProfile: () => undefined,
-  getApiRequestProfile: () => null
+  setApiRequestConnection: () => undefined,
+  getApiRequestProfile: () => null,
+  getApiRequestConnection: () => null
 }))
 
 vi.mock('@/store/notifications', () => ({
@@ -238,12 +241,44 @@ describe('ToolsetConfigPanel', () => {
 
     fireEvent.change(await screen.findByDisplayValue('alloy'), { target: { value: 'marin' } })
     await waitFor(() => expect(saveHermesConfigRecord).toHaveBeenCalled(), { timeout: 3000 })
+
     const [saved, forwarded] = saveHermesConfigRecord.mock.calls.at(-1) as [
       Record<string, Record<string, Record<string, string>>>,
       unknown
     ]
+
     expect(saved.tts.openai.voice).toBe('marin')
     expect(forwarded).toEqual(scope)
+  })
+
+  it('scopes schema and ElevenLabs catalog caches to the full connection/profile owner', async () => {
+    const scope = { connectionId: 'gw-voice', profile: 'scout' }
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } }
+    })
+
+    client.setQueryData(['hermes-config-schema'], {
+      fields: { 'tts.elevenlabs.voice_id': { type: 'string' } }
+    })
+    client.setQueryData(['elevenlabs-voices'], {
+      available: true,
+      voices: [{ label: 'Stale voice', name: 'Stale', voice_id: 'stale' }]
+    })
+
+    rtlRender(
+      <QueryClientProvider client={client}>
+        <VoiceProviderFields profile={scope} providerKey="elevenlabs" section="tts" />
+      </QueryClientProvider>
+    )
+
+    await waitFor(() => {
+      expect(getHermesConfigSchema).toHaveBeenCalledWith(scope)
+      expect(getElevenLabsVoices).toHaveBeenCalledWith(scope)
+    })
+
+    expect(client.getQueryData(['hermes-config-schema', 'gw-voice::scout'])).toBeDefined()
+    expect(client.getQueryData(['elevenlabs-voices', 'gw-voice::scout'])).toBeDefined()
   })
 
   it('renders no inline voice fields for rows without tts_provider (older backend)', async () => {

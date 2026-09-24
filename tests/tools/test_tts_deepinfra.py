@@ -34,6 +34,34 @@ def test_raises_when_no_model_resolvable(monkeypatch, tmp_path):
         _generate_deepinfra_tts("hi", str(tmp_path / "out.mp3"), {})
 
 
+def test_speed_precedence_reaches_openai_compatible_backend(tmp_path, monkeypatch):
+    from tools import tts_tool
+
+    monkeypatch.setattr(tts_tool, "_resolve_provider_key", lambda *_: "test-key")
+    with patch.object(tts_tool, "_generate_openai_tts", return_value=str(tmp_path / "out.mp3")) as generate:
+        tts_tool._generate_deepinfra_tts(
+            "hi", str(tmp_path / "out.mp3"),
+            {
+                "speed": 1.5,
+                "openai": {"language": "fr"},
+                "deepinfra": {
+                    "model": "vendor/tts", "speed": 0.75, "language": "es",
+                    "instructions": "Speak brightly.",
+                },
+            },
+        )
+    assert generate.call_args.kwargs["speed"] == 0.75
+    assert generate.call_args.kwargs["instructions"] == "Speak brightly."
+    assert generate.call_args.kwargs["extra_body"] == {"lang_code": "es"}
+
+    with patch.object(tts_tool, "_generate_openai_tts", return_value=str(tmp_path / "out.mp3")) as generate:
+        tts_tool._generate_deepinfra_tts(
+            "hi", str(tmp_path / "out.mp3"),
+            {"speed": 1.25, "deepinfra": {"model": "vendor/tts", "speed": None}},
+        )
+    assert generate.call_args.kwargs["speed"] == 1.25
+
+
 def test_requirements_follow_explicit_deepinfra_provider(monkeypatch):
     from tools import tts_tool
 

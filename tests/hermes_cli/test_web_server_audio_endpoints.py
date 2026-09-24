@@ -125,3 +125,67 @@ def test_audio_speak_persona_voice_selection(client, monkeypatch, tmp_path):
     assert captured_calls[-1]["voice"] == "ar-EG-SalmaNeural"
 
 
+def test_audio_speak_uses_configured_provider_without_persona_or_override(
+    client, monkeypatch, tmp_path
+):
+    import json
+
+    import yaml
+    from hermes_constants import get_hermes_home
+    import tools.tts_tool as tts_module
+
+    (get_hermes_home() / "config.yaml").write_text(
+        yaml.safe_dump({"tts": {"provider": "fish"}}), encoding="utf-8"
+    )
+    audio_path = tmp_path / "configured-provider.mp3"
+    audio_path.write_bytes(b"configured-audio")
+    captured = {}
+
+    def fake_tts(text, provider=None, voice=None, model=None):
+        captured["provider"] = provider
+        if provider is None:
+            provider = tts_module._get_provider(tts_module._load_tts_config())
+        captured["resolved_provider"] = provider
+        captured["voice"] = voice
+        return json.dumps({"success": True, "file_path": str(audio_path)})
+
+    monkeypatch.setattr(tts_module, "text_to_speech_tool", fake_tts)
+    res = client.post("/api/audio/speak", json={"text": "Use my configured voice"})
+
+    assert res.status_code == 200
+    assert captured == {"provider": None, "resolved_provider": "fish", "voice": None}
+
+
+def test_audio_speak_combines_all_reported_files_and_deletes_them(
+    client, monkeypatch, tmp_path
+):
+    import base64
+    import json
+
+    import tools.tts_tool as tts_module
+
+    audio_paths = [tmp_path / "reply.part01.mp3", tmp_path / "reply.part02.mp3"]
+    audio_paths[0].write_bytes(b"first-part")
+    audio_paths[1].write_bytes(b"second-part")
+
+    def fake_tts(text, provider=None, voice=None, model=None):
+        return json.dumps(
+            {
+                "success": True,
+                "file_path": str(audio_paths[0]),
+                "file_paths": [str(path) for path in audio_paths],
+                "provider": "edge",
+            }
+        )
+
+    monkeypatch.setattr(tts_module, "text_to_speech_tool", fake_tts)
+    res = client.post(
+        "/api/audio/speak", json={"text": "A long reply", "provider": "edge"}
+    )
+
+    assert res.status_code == 200
+    encoded = res.json()["data_url"].split(",", 1)[1]
+    assert base64.b64decode(encoded) == b"first-partsecond-part"
+    assert all(not path.exists() for path in audio_paths)
+
+

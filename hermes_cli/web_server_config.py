@@ -110,8 +110,26 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     },
     "tts.provider": _select(
         "Text-to-speech provider",
-        "edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "openrouter", "neutts", "kittentts", "piper",
+        "edge", "elevenlabs", "openai", "deepinfra", "xai", "minimax", "mistral", "gemini", "openrouter",
+        "neutts", "kittentts", "piper",
     ),
+    "tts.streaming.provider": _select(
+        "Streaming provider override", "", "auto", "elevenlabs", "gemini", "openai", "xai",
+    ),
+    "tts.output_format": _select(
+        "Default command/plugin output format; blank uses the provider default",
+        "", "mp3", "wav", "ogg", "flac", "m4a", "aac", "amr", "opus",
+    ),
+    "tts.openai.response_format": _select(
+        "OpenAI response format; blank follows the output path", "", "mp3", "opus", "aac", "flac", "wav",
+    ),
+    "tts.deepinfra.response_format": _select(
+        "DeepInfra response format; blank follows the output path", "", "mp3", "opus", "aac", "flac", "wav",
+    ),
+    "tts.openrouter.response_format": _select(
+        "OpenRouter response format; blank follows the output path", "", "mp3", "pcm",
+    ),
+    "tts.minimax.region": _select("MiniMax credential region", "", "global", "cn"),
     # "mistral" temporarily removed — mistralai PyPI package quarantined
     # (malicious 2.4.6 release on 2026-05-12). Restore once available.
     "stt.provider": _select("Speech-to-text provider", "local", "groq", "openai", "xai", "elevenlabs"),
@@ -171,6 +189,24 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
         ),
     },
 }
+
+for _tts_limit_path in (
+    "tts.max_text_length", "tts.edge.max_text_length", "tts.elevenlabs.max_text_length",
+    "tts.openai.max_text_length", "tts.gemini.max_text_length", "tts.xai.max_text_length",
+    "tts.mistral.max_text_length", "tts.minimax.max_text_length", "tts.kittentts.max_text_length",
+    "tts.neutts.max_text_length", "tts.piper.max_text_length", "tts.deepinfra.max_text_length",
+    "tts.openrouter.max_text_length",
+):
+    _SCHEMA_OVERRIDES[_tts_limit_path] = {
+        "type": "number", "description": "Maximum input characters per request; blank uses provider default",
+    }
+for _tts_speed_path in (
+    "tts.edge.speed", "tts.elevenlabs.speed", "tts.openai.speed", "tts.xai.speed", "tts.minimax.speed",
+    "tts.kittentts.speed", "tts.deepinfra.speed", "tts.openrouter.speed",
+):
+    _SCHEMA_OVERRIDES[_tts_speed_path] = {
+        "type": "number", "description": "Provider speed override; blank uses global tts.speed",
+    }
 
 # Small categories fold into a bigger tab to avoid one-field orphan tabs. Several sources
 # (models_dev, onboarding, mcp, computer_use, telemetry, plugins, doctor, runtime, session,

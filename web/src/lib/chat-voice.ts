@@ -196,12 +196,14 @@ export const VOICE_PERSONA_LABELS: Record<VoicePersona, string> = {
 
 export const OPENROUTER_MALE_FLUX_VOICE = "flux-orion-en";
 export const OPENROUTER_FEMALE_FLUX_VOICE = "flux-alexis-en";
+export const OPENROUTER_MALE_FISH_VOICE = "802e3355590647bf9087eb4185361307";
+export const OPENROUTER_FEMALE_FISH_VOICE = "b347db033a6549378b48d00acb0d06cd";
 
 export const OPENROUTER_TTS_SPECS: Record<"flux" | "fish", OpenRouterTtsSpec> = {
   flux: { model_id: "deepgram/flux-tts:free", voice_id: OPENROUTER_FEMALE_FLUX_VOICE },
   fish: {
     model_id: "fish-audio/s2.1-pro-free:free",
-    voice_id: "b347db033a6549378b48d00acb0d06cd",
+    voice_id: OPENROUTER_FEMALE_FISH_VOICE,
   },
 };
 
@@ -215,23 +217,31 @@ export interface OpenRouterTtsRoute extends OpenRouterTtsSpec {
  * text is never sent to Flux (English-only per the OpenRouter catalog); it
  * reroutes to the multilingual Fish model instead.
  *
- * For Flux, the voice is chosen to match the selected persona:
- * - "jarvis" (Male) -> flux-orion-en
- * - "gwen" (Female) -> flux-alexis-en
+ * For Flux and Fish, the voice is chosen to match the selected persona:
+ * - "jarvis" (Male) -> flux-orion-en / 802e3355590647bf9087eb4185361307
+ * - "gwen" (Female) -> flux-alexis-en / b347db033a6549378b48d00acb0d06cd
  */
 export function chooseOpenRouterTts(
   text: string,
   engine: "flux" | "fish",
-  persona: VoicePersona = "gwen",
+  persona: VoicePersona = "jarvis",
 ): OpenRouterTtsRoute {
-  if (engine === "flux" && (containsArabic(text) || detectDominantScript(text) === "ar")) {
-    return { ...OPENROUTER_TTS_SPECS.fish, fallbackToFish: true };
+  const isArabic = containsArabic(text) || detectDominantScript(text) === "ar";
+  const fallbackToFish = engine === "flux" && isArabic;
+  const effectiveEngine = fallbackToFish ? "fish" : engine;
+
+  let voice_id: string;
+  if (effectiveEngine === "flux") {
+    voice_id = persona === "jarvis" ? OPENROUTER_MALE_FLUX_VOICE : OPENROUTER_FEMALE_FLUX_VOICE;
+  } else {
+    voice_id = persona === "jarvis" ? OPENROUTER_MALE_FISH_VOICE : OPENROUTER_FEMALE_FISH_VOICE;
   }
-  const spec = { ...OPENROUTER_TTS_SPECS[engine] };
-  if (engine === "flux") {
-    spec.voice_id = persona === "jarvis" ? OPENROUTER_MALE_FLUX_VOICE : OPENROUTER_FEMALE_FLUX_VOICE;
-  }
-  return { ...spec, fallbackToFish: false };
+
+  return {
+    model_id: OPENROUTER_TTS_SPECS[effectiveEngine].model_id,
+    voice_id,
+    fallbackToFish,
+  };
 }
 
 export interface ServerTranscriptionResponse {

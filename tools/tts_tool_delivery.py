@@ -23,8 +23,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_cli._subprocess_compat import windows_hide_flags
 from tools.tts_command_provider import (
-    BUILTIN_TTS_PROVIDERS, DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH, _get_named_provider_config,
-    _is_command_provider_config)
+    BUILTIN_TTS_PROVIDERS, COMMAND_TTS_OUTPUT_FORMATS, DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH,
+    _get_named_provider_config, _is_command_provider_config)
 
 logger = logging.getLogger("tools.tts_tool")
 
@@ -41,6 +41,50 @@ def _section(tts_config: Any, key: str) -> Dict[str, Any]:
     return section if isinstance(section, dict) else {}
 
 
+def _provider_config(tts_config: Any, provider: str) -> Dict[str, Any]:
+    """Resolve a built-in section or canonical/legacy custom-provider section."""
+    cfg = tts_config if isinstance(tts_config, dict) else {}
+    key = (provider or "").lower().strip()
+    if key in BUILTIN_TTS_PROVIDERS:
+        return _section(cfg, key)
+    return _get_named_provider_config(cfg, key)
+
+
+def _provider_speed(tts_config: Any, provider: str, default: float = 1.0) -> float:
+    """Resolve provider speed, then global speed, then *default*."""
+    cfg = tts_config if isinstance(tts_config, dict) else {}
+    candidates = (_provider_config(cfg, provider).get("speed"), cfg.get("speed", default))
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            return float(candidate)
+        except (TypeError, ValueError):
+            continue
+    return float(default)
+
+
+def _configured_output_format(
+    tts_config: Any, provider: str, *, include_global: bool = True,
+) -> str:
+    """Configured provider response/output format as a file extension."""
+    cfg = tts_config if isinstance(tts_config, dict) else {}
+    provider_cfg = _provider_config(cfg, provider)
+    candidates = [
+        provider_cfg.get("response_format"), provider_cfg.get("output_format"),
+        provider_cfg.get("format"),
+    ]
+    if include_global:
+        candidates.append(cfg.get("output_format"))
+    for candidate in candidates:
+        normalized = str(candidate or "").lower().strip().lstrip(".")
+        if normalized == "pcm":
+            return "wav"
+        if normalized in COMMAND_TTS_OUTPUT_FORMATS:
+            return normalized
+    return ""
+
+
 FALLBACK_MAX_TEXT_LENGTH = 4000  # provider not recognised at all
 
 # Per-provider input-character caps (official docs); override: ``tts.<provider>.max_text_length``.
@@ -51,7 +95,8 @@ PROVIDER_MAX_TEXT_LENGTH: Dict[str, int] = {
     "minimax": 10000,     # https://platform.minimax.io/docs/api-reference/speech-t2a-http (sync)
     "mistral": 4000,      # conservative; no published per-request cap
     "gemini": 32000,      # 32k-token context window; char cap is conservative
-    "openrouter": 4000,  # conservative; no published per-request cap for Flux / Fish Audio
+    "deepinfra": 4000,
+    "openrouter": 4000,   # conservative; no published per-request cap for Flux / Fish Audio
     "elevenlabs": 10000,  # fallback when model-aware lookup can't resolve (multilingual_v2)
     "neutts": 2000,       # local model, quality falls off on long text
     "kittentts": 2000,    # local 25MB model
@@ -72,31 +117,25 @@ def _positive_int(value: Any) -> Optional[int]:
 
 
 def _resolve_max_text_length(provider: Optional[str], tts_config: Optional[Dict[str, Any]] = None) -> int:
-    """Input-character cap for *provider*: ``tts.<provider>.max_text_length`` > ElevenLabs model
-    table > ``PROVIDER_MAX_TEXT_LENGTH`` > command provider's own ``max_text_length`` (else
-    ``DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH``) > ``FALLBACK_MAX_TEXT_LENGTH``. Non-positive /
-    non-int overrides fall through so a broken config can't disable truncation."""
+    """Resolve provider-specific, global, and built-in input-character limits."""
     if not provider:
         return FALLBACK_MAX_TEXT_LENGTH
     key = provider.lower().strip()
-    cfg = tts_config or {}
-    prov_cfg = _section(cfg, key)
-    override = _positive_int(prov_cfg.get("max_text_length"))
-    if override:
+    cfg = tts_config if isinstance(tts_config, dict) else {}
+    provider_cfg = _provider_config(cfg, key)
+    if override := _positive_int(provider_cfg.get("max_text_length")):
+        return override
+    command_default = None
+    if key not in BUILTIN_TTS_PROVIDERS and _is_command_provider_config(provider_cfg):
+        command_default = DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH
+    if override := _positive_int(cfg.get("max_text_length")):
         return override
     if key == "elevenlabs":
-        from tools.tts_tool_providers import DEFAULT_ELEVENLABS_MODEL_ID  # providers imports this module
-        model_id = prov_cfg.get("model_id") or DEFAULT_ELEVENLABS_MODEL_ID
-        mapped = ELEVENLABS_MODEL_MAX_TEXT_LENGTH.get(str(model_id).strip())
-        if mapped:
+        from tools.tts_tool_providers import DEFAULT_ELEVENLABS_MODEL_ID
+        model_id = provider_cfg.get("model_id") or DEFAULT_ELEVENLABS_MODEL_ID
+        if mapped := ELEVENLABS_MODEL_MAX_TEXT_LENGTH.get(str(model_id).strip()):
             return mapped
-    if key in PROVIDER_MAX_TEXT_LENGTH:
-        return PROVIDER_MAX_TEXT_LENGTH[key]
-    if key not in BUILTIN_TTS_PROVIDERS:
-        named = _get_named_provider_config(cfg, key)
-        if _is_command_provider_config(named):
-            return _positive_int(named.get("max_text_length")) or DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH
-    return FALLBACK_MAX_TEXT_LENGTH
+    return command_default or PROVIDER_MAX_TEXT_LENGTH.get(key, FALLBACK_MAX_TEXT_LENGTH)
 
 
 # PCM output specs for Gemini TTS (fixed by the API): 24kHz mono 16-bit (L16).

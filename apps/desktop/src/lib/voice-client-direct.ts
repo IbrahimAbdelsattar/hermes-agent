@@ -40,9 +40,12 @@ export interface DirectTtsConfig {
   model: null | string
   voice: null | string
   speed: null | number
+  max_text_length?: null | number
+  instructions?: string
+  response_format?: string
   /** tts.streaming.min_len — shortest first sentence (chars) cut on its own; absent on older backends. */
   min_len?: null | number
-  /** Optional tts.openai fields the server forwards verbatim (lang_code, consent_attestation). */
+  /** Optional compatible-endpoint fields forwarded verbatim (lang_code, consent_attestation). */
   extra_body?: Record<string, unknown>
 }
 
@@ -324,18 +327,117 @@ export async function directTtsConfig(owner?: OwnerScope): Promise<DirectTtsConf
   return config?.tts && config.tts.mode === 'direct' ? config.tts : null
 }
 
-/** Synthesize one text segment to audio bytes (mp3). Throws on provider rejection. */
+export function clientDirectTextLimit(tts: Pick<DirectTtsConfig, 'max_text_length'>): null | number {
+  const value = Number(tts.max_text_length)
+
+  if (!Number.isFinite(value) || value < 1) {
+    return null
+  }
+
+  return Math.floor(value)
+}
+
+export function splitTextForClientDirect(text: string, maxTextLength?: null | number): string[] {
+  const normalized = text.trim()
+  const size = clientDirectTextLimit({ max_text_length: maxTextLength })
+
+  if (size === null) {
+    return normalized ? [normalized] : []
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean)
+
+  if (words.length === 0) {
+    return []
+  }
+
+  const chunks: string[] = []
+  let current = ''
+
+  for (const word of words) {
+    const characters = Array.from(word)
+
+    if (characters.length > size) {
+      if (current) {
+        chunks.push(current)
+        current = ''
+      }
+
+      for (let index = 0; index < characters.length; index += size) {
+        chunks.push(characters.slice(index, index + size).join(''))
+      }
+
+      continue
+    }
+
+    const candidate = current ? `${current} ${word}` : word
+
+    if (Array.from(candidate).length > size) {
+      chunks.push(current)
+      current = word
+    } else {
+      current = candidate
+    }
+  }
+
+  if (current) {
+    chunks.push(current)
+  }
+
+  return chunks
+}
+
+function wrapPcmAsWav(pcm: ArrayBuffer, sampleRate = 24_000): ArrayBuffer {
+  const source = new Uint8Array(pcm)
+  const output = new ArrayBuffer(44 + source.byteLength)
+  const view = new DataView(output)
+
+  const writeText = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index))
+    }
+  }
+
+  writeText(0, 'RIFF')
+  view.setUint32(4, 36 + source.byteLength, true)
+  writeText(8, 'WAVE')
+  writeText(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeText(36, 'data')
+  view.setUint32(40, source.byteLength, true)
+  new Uint8Array(output, 44).set(source)
+
+  return output
+}
+
+/** Synthesize one text segment to audio bytes. Throws on provider rejection. */
 export async function synthesizeSpeechClientDirect(tts: DirectTtsConfig, text: string): Promise<ArrayBuffer> {
+  const textLimit = clientDirectTextLimit(tts)
+
+  if (textLimit !== null && Array.from(text).length > textLimit) {
+    throw new Error(`TTS text exceeds the configured ${textLimit}-character provider limit`)
+  }
+
   if (tts.wire === 'openai-speech') {
     const body: Record<string, unknown> = {
       ...(tts.extra_body ?? {}),
       model: tts.model,
       voice: tts.voice,
       input: text,
-      response_format: 'mp3'
+      response_format: tts.response_format || 'mp3'
     }
 
-    if (tts.speed && tts.speed !== 1) {
+    if (tts.instructions) {
+      body.instructions = tts.instructions
+    }
+
+    if (tts.speed !== null && tts.speed !== undefined && tts.speed !== 1) {
       body.speed = tts.speed
     }
 
@@ -352,22 +454,27 @@ export async function synthesizeSpeechClientDirect(tts: DirectTtsConfig, text: s
       throw new Error(`${tts.provider} TTS error (HTTP ${response.status}): ${await providerErrorText(response)}`)
     }
 
-    return response.arrayBuffer()
+    const audio = await response.arrayBuffer()
+
+    return tts.response_format?.toLowerCase() === 'pcm' ? wrapPcmAsWav(audio) : audio
   }
 
   if (tts.wire === 'elevenlabs-tts') {
-    const response = await fetch(
-      `${tts.base_url.replace(/\/+$/, '')}/text-to-speech/${encodeURIComponent(tts.voice || '')}`,
-      {
-        method: 'POST',
-        headers: {
-          'xi-api-key': tts.api_key,
-          'Content-Type': 'application/json',
-          Accept: 'audio/mpeg'
-        },
-        body: JSON.stringify({ text, model_id: tts.model })
-      }
-    )
+    const url = new URL(`${tts.base_url.replace(/\/+$/, '')}/text-to-speech/${encodeURIComponent(tts.voice || '')}`)
+
+    if (tts.speed !== null && tts.speed !== undefined && tts.speed !== 1) {
+      url.searchParams.set('speed', String(tts.speed))
+    }
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'xi-api-key': tts.api_key,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg'
+      },
+      body: JSON.stringify({ text, model_id: tts.model })
+    })
 
     if (!response.ok) {
       throw new Error(`ElevenLabs TTS error (HTTP ${response.status}): ${await providerErrorText(response)}`)

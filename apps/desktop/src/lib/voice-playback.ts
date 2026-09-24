@@ -6,6 +6,7 @@ import {
   cutSentences,
   directTtsConfig,
   type DirectTtsConfig,
+  splitTextForClientDirect,
   synthesizeSpeechClientDirect
 } from '@/lib/voice-client-direct'
 import { RECONNECT_ATTEMPT_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout'
@@ -23,6 +24,31 @@ import { sanitizeTextForSpeech } from './speech-text'
 // fails to start or stalls mid-stream for this long (rearmed on each progress
 // tick, so legitimately long speech is never cut off).
 const PLAYBACK_STALL_MS = 15_000
+
+function clientDirectAudioType(tts: DirectTtsConfig): string {
+  switch (tts.response_format?.toLowerCase()) {
+    case 'pcm':
+
+    case 'wav':
+
+      return 'audio/wav'
+
+    case 'flac':
+      return 'audio/flac'
+
+    case 'ogg':
+
+    case 'opus':
+
+      return 'audio/ogg'
+
+    case 'aac':
+      return 'audio/aac'
+
+    default:
+      return 'audio/mpeg'
+  }
+}
 
 let currentAudio: HTMLAudioElement | null = null
 let currentStop: (() => void) | null = null
@@ -273,7 +299,7 @@ function openClientDirectSpeechSession(tts: DirectTtsConfig, options: VoicePlayb
           setVoicePlaybackState(currentState('speaking', options))
         }
 
-        const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }))
+        const url = URL.createObjectURL(new Blob([bytes], { type: clientDirectAudioType(tts) }))
 
         try {
           await new Promise<void>((resolve, reject) => {
@@ -319,7 +345,7 @@ function openClientDirectSpeechSession(tts: DirectTtsConfig, options: VoicePlayb
         const speakable = sanitizeTextForSpeech(sentence)
 
         if (speakable) {
-          queue.push(speakable)
+          queue.push(...splitTextForClientDirect(speakable, tts.max_text_length))
         }
       }
 

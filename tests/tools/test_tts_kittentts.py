@@ -79,6 +79,26 @@ class TestGenerateKittenTts:
         assert call_kwargs["speed"] == 1.25
         assert call_kwargs["clean_text"] is False
 
+    def test_provider_speed_overrides_global(self, tmp_path, mock_kittentts_module):
+        from tools.tts_tool import _generate_kittentts
+
+        fake_model, _ = mock_kittentts_module
+        _generate_kittentts(
+            "Hi there", str(tmp_path / "out.wav"),
+            {"speed": 1.5, "kittentts": {"speed": 0.75}},
+        )
+        assert fake_model.generate.call_args.kwargs["speed"] == 0.75
+
+    def test_global_speed_applies_without_provider_override(self, tmp_path, mock_kittentts_module):
+        from tools.tts_tool import _generate_kittentts
+
+        fake_model, _ = mock_kittentts_module
+        _generate_kittentts(
+            "Hi there", str(tmp_path / "out.wav"),
+            {"speed": 1.25, "kittentts": {"speed": None}},
+        )
+        assert fake_model.generate.call_args.kwargs["speed"] == 1.25
+
 
     def test_missing_kittentts_raises_import_error(self, tmp_path, monkeypatch):
         """When kittentts package is not installed, _import_kittentts raises."""

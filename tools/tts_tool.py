@@ -39,8 +39,8 @@ from tools.tts_command_provider import (
     _get_command_tts_output_format, _is_command_tts_voice_compatible, _resolve_command_provider_config)
 from tools.tool_backend_helpers import NOUS_MANAGED_PROVIDER
 from tools.tts_tool_delivery import (
-    _resolve_max_text_length, _build_audio_delivery_files, _convert_to_opus, _remove_quietly,
-    _repair_ogg_container, _resolve_audio_delivery_profile, _split_text_for_tts)
+    _configured_output_format, _resolve_max_text_length, _build_audio_delivery_files, _convert_to_opus,
+    _remove_quietly, _repair_ogg_container, _resolve_audio_delivery_profile, _split_text_for_tts)
 from tools.tts_tool_providers import (
     _generate_edge_tts, _generate_elevenlabs, _generate_gemini_tts, _generate_minimax_tts,
     _generate_mistral_tts, _generate_xai_tts, _resolve_minimax_tts_runtime)
@@ -156,7 +156,7 @@ OPUS_VOICE_PLATFORMS = frozenset({"telegram", "matrix", "feishu", "whatsapp", "s
 # bare MEDIA: matcher and cannot tell a filename from a directive. Mirrors the collector's
 # grammar (gateway.platforms.base.MEDIA_TAG_CLEANUP_RE): an anchored path OR a quoted payload,
 # which the collector accepts with no anchor and no extension.
-_MEDIA_DIRECTIVE_RE = re.compile(r"media:\s*[`'\"*_]*(?:[`'\"]|[a-z]:[/\\]|~?/)", re.IGNORECASE)
+_MEDIA_DIRECTIVE_RE = re.compile(r"media:\s*[`'\"*_]*(?:[`'\"]|[a-z]:[/\\]|~?[/\\])", re.IGNORECASE)
 
 # Built-ins that emit Opus natively when asked for .ogg; the rest need ffmpeg for voice bubbles.
 _NATIVE_OPUS_PROVIDERS = frozenset({"openai", "elevenlabs", "mistral", "gemini"})
@@ -231,8 +231,8 @@ def _synthesize_builtin(engine: str, text: str, file_str: str, tts_config: Dict[
     logger.info("Generating speech with %s...", entry[1] if entry else "Edge TTS")
     if entry is None:
         _run_edge_tts(text, file_str, tts_config)
-    elif engine == "openai":
-        _generate_openai_tts(text, file_str, tts_config, instructions=instructions)
+    elif engine in {"openai", "deepinfra"}:
+        globals()[entry[2]](text, file_str, tts_config, instructions=instructions)
     else:
         globals()[entry[2]](text, file_str, tts_config)
 
@@ -270,21 +270,41 @@ def _apply_call_overrides(
     tts_config: Dict[str, Any], speed: Optional[float], provider: Optional[str],
     voice: Optional[str] = None, model: Optional[str] = None,
 ):
-    """Apply per-call ``speed``, ``voice``, ``model`` (clamped, on a copy so the cached config isn't mutated)
-    and resolve the provider name."""
-    if speed is not None or voice is not None or model is not None:
-        tts_config = copy.deepcopy(tts_config)
-    if speed is not None:
-        tts_config["speed"] = max(0.25, min(4.0, float(speed)))
+    """Apply per-call overrides on a copy and resolve the selected provider."""
     resolved_prov = provider.lower().strip() if provider else _get_provider(tts_config)
-    if voice is not None or model is not None:
-        prov_dict = tts_config.setdefault(resolved_prov, {})
-        if voice is not None:
-            prov_dict["voice_id"] = voice
-            prov_dict["voice"] = voice
-        if model is not None:
-            prov_dict["model_id"] = model
-            prov_dict["model"] = model
+    if speed is None and voice is None and model is None:
+        return tts_config, resolved_prov
+    tts_config = copy.deepcopy(tts_config)
+    if resolved_prov in BUILTIN_TTS_PROVIDERS:
+        provider_cfg = tts_config.get(resolved_prov)
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            tts_config[resolved_prov] = provider_cfg
+    else:
+        providers = tts_config.get("providers")
+        if not isinstance(providers, dict):
+            providers = {}
+            tts_config["providers"] = providers
+        provider_cfg = providers.get(resolved_prov)
+        if not isinstance(provider_cfg, dict):
+            legacy_provider_cfg = tts_config.get(resolved_prov)
+            if isinstance(legacy_provider_cfg, dict):
+                provider_cfg = legacy_provider_cfg
+            else:
+                provider_cfg = {}
+                providers[resolved_prov] = provider_cfg
+    if speed is not None:
+        resolved_speed = max(0.25, min(4.0, float(speed)))
+        tts_config["speed"] = resolved_speed
+        provider_cfg["speed"] = resolved_speed
+    if voice is not None:
+        provider_cfg["voice"] = voice
+        if resolved_prov in BUILTIN_TTS_PROVIDERS:
+            provider_cfg["voice_id"] = voice
+    if model is not None:
+        provider_cfg["model"] = model
+        if resolved_prov in BUILTIN_TTS_PROVIDERS:
+            provider_cfg["model_id"] = model
     return tts_config, resolved_prov
 
 
@@ -297,12 +317,16 @@ def _session_platform() -> tuple:
 
 def _resolve_output_base(
     output_path: Optional[str], provider: str, command_provider_config: Optional[Dict[str, Any]], want_opus: bool,
+    tts_config: Optional[Dict[str, Any]] = None,
 ) -> tuple:
     """Pick the output file -> ``(Path, None)`` or ``(None, error_json)``.
 
     A caller path is rejected on ``..`` traversal (bug or prompt-injection; absolute is fine) and
     on protected credential/system locations. Default ``<audio cache>/tts_<timestamp>.<ext>``: the
-    command format, ``.ogg`` for native-Opus providers on Opus platforms, else ``.mp3``."""
+    command/plugin format, a provider response format, ``.ogg`` for native-Opus providers on Opus
+    platforms, else ``.mp3``."""
+    config = tts_config if isinstance(tts_config, dict) else {}
+    configured_default = config.get("output_format") or ""
     if output_path:
         from tools.path_security import has_traversal_component, has_unsafe_path_chars
         if has_unsafe_path_chars(output_path):
@@ -320,7 +344,8 @@ def _resolve_output_base(
                 "Use an absolute path or one relative to the current directory without '..'.")
         file_path = Path(output_path).expanduser()
         if command_provider_config is not None:
-            file_path = _configured_command_tts_output_path(file_path, command_provider_config)
+            file_path = _configured_command_tts_output_path(
+                file_path, command_provider_config, configured_default)
         from agent.file_safety import is_write_approval_required, is_write_denied
         if is_write_denied(str(file_path)) or is_write_approval_required(str(file_path)):
             return None, _error_json(
@@ -328,9 +353,13 @@ def _resolve_output_base(
                 f"{file_path}. Choose a normal audio output location.")
     else:
         if command_provider_config is not None:
-            ext = _get_command_tts_output_format(command_provider_config)
+            ext = _get_command_tts_output_format(
+                command_provider_config, default=configured_default)
         else:
-            ext = "ogg" if want_opus and provider in _NATIVE_OPUS_PROVIDERS else "mp3"
+            ext = _configured_output_format(
+                config, provider, include_global=provider not in BUILTIN_TTS_PROVIDERS)
+            if not ext:
+                ext = "ogg" if want_opus and provider in _NATIVE_OPUS_PROVIDERS else "mp3"
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         file_path = Path(_default_output_dir()) / f"tts_{timestamp}.{ext}"
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,7 +492,7 @@ def text_to_speech_tool(
     platform, want_opus = _session_platform()
     delivery_profile = _resolve_audio_delivery_profile(platform, tts_config)
     base_path, error = _resolve_output_base(
-        output_path, provider, command_provider_config, want_opus)
+        output_path, provider, command_provider_config, want_opus, tts_config)
     if error:
         return error
     generated_artifacts: set[str] = set()
@@ -596,7 +625,7 @@ TTS_SCHEMA = {
                 "type": "string",
                 "description": (
                     "Optional TTS provider override. Accepts built-in names "
-                    "(edge, openai, elevenlabs, minimax, xai, mistral, gemini, "
+                    "(edge, openai, elevenlabs, deepinfra, minimax, xai, mistral, gemini, "
                     "openrouter, neutts, kittentts, piper), user-declared command provider "
                     "names from tts.providers.<name>, or plugin-registered names. "
                     "When omitted, the configured tts.provider from config.yaml is used."

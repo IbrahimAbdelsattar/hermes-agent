@@ -14,6 +14,32 @@ import pytest
 from tools import tts_tool, tts_tool_openai
 
 
+class TestTtsResponseFormatConfig:
+    def test_provider_response_format_selects_default_output_suffix(self):
+        from tools.tts_tool import _resolve_output_base
+
+        config = {"openai": {"response_format": "wav"}}
+        path, error = _resolve_output_base(None, "openai", None, False, config)
+        assert error is None
+        assert path.suffix == ".wav"
+
+    def test_global_output_format_is_the_plugin_fallback(self):
+        from tools.tts_tool import _resolve_output_base
+
+        config = {"output_format": "flac", "providers": {"custom-tts": {}}}
+        path, error = _resolve_output_base(None, "custom-tts", None, False, config)
+        assert error is None
+        assert path.suffix == ".flac"
+
+    def test_openrouter_pcm_response_format_uses_wav_container(self):
+        from tools.tts_tool import _resolve_output_base
+
+        config = {"openrouter": {"response_format": "pcm"}}
+        path, error = _resolve_output_base(None, "openrouter", None, False, config)
+        assert error is None
+        assert path.suffix == ".wav"
+
+
 class TestResolveOpenaiAudioClientConfig:
     def test_prefers_tts_config_credentials_and_base_url(self):
         config = {

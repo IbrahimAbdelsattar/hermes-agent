@@ -209,9 +209,9 @@ export const AUDIO_TTS_LEASE_REQUEST_TIMEOUT_MS = 180_000
  * (`active: true`) or release it once no surface needs it (`active: false`).
  * `lease` names the toggle — `desktop:read-aloud`, `desktop:conversation`.
  */
-export function setTtsLease(lease: string, active: boolean): Promise<AudioTtsLeaseResponse> {
+export function setTtsLease(lease: string, active: boolean, owner?: OwnerScope): Promise<AudioTtsLeaseResponse> {
   return hermesApi<AudioTtsLeaseResponse>({
-    ...profileScoped(),
+    ...ownerScoped(owner),
     path: '/api/audio/tts-lease',
     method: 'POST',
     body: { active, lease },
@@ -219,10 +219,10 @@ export function setTtsLease(lease: string, active: boolean): Promise<AudioTtsLea
   })
 }
 
-export function getElevenLabsVoices(profile?: null | string): Promise<ElevenLabsVoicesResponse> {
+export function getElevenLabsVoices(profile?: ProfileScope): Promise<ElevenLabsVoicesResponse> {
   return hermesApi<ElevenLabsVoicesResponse>({
-    path: '/api/audio/elevenlabs/voices',
-    ...profileScoped(profile)
+    ...capabilityScoped(profile),
+    path: '/api/audio/elevenlabs/voices'
   })
 }
 

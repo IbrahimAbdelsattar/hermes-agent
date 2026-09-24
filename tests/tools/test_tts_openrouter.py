@@ -80,6 +80,30 @@ def test_flux_default_voice_and_mp3_mime_through_full_chain(tmp_path, monkeypatc
         assert fh.read() == b"ID3\x04\x00\x00" + b"\x00" * 64
 
 
+def test_speed_precedence_reaches_wire(tmp_path, monkeypatch):
+    from tools import tts_tool
+
+    home = _isolate(monkeypatch, tmp_path)
+    _write_home(home, {
+        "tts": {
+            "provider": "openrouter",
+            "speed": 1.5,
+            "openrouter": {"speed": 0.75},
+        },
+    })
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured.update(kwargs["json"])
+        return _FakeORResponse(body=b"ID3" + b"\x00" * 32)
+
+    with patch("requests.post", side_effect=fake_post):
+        result = json.loads(tts_tool.text_to_speech_tool("Hello"))
+
+    assert result["success"] is True
+    assert captured["speed"] == 0.75
+
+
 def test_fish_model_voice_and_json_error_reporting(tmp_path, monkeypatch):
     """Fish model with an explicit voice override; a JSON error surfaces as a named failure."""
     from tools import tts_tool

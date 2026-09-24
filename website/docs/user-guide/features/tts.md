@@ -14,7 +14,7 @@ If you have a paid [Nous Portal](https://portal.nousresearch.com) subscription, 
 
 ## Text-to-Speech
 
-Convert text to speech with eleven providers:
+Convert text to speech with twelve built-in providers:
 
 | Provider | Quality | Cost | API Key |
 |----------|---------|------|---------|
@@ -24,6 +24,7 @@ Convert text to speech with eleven providers:
 | **MiniMax TTS** | Excellent | Paid | `MINIMAX_API_KEY` or `MINIMAX_CN_API_KEY` |
 | **Mistral (Voxtral TTS)** | Excellent | Paid | `MISTRAL_API_KEY` |
 | **Google Gemini TTS** | Excellent | Free tier | `GEMINI_API_KEY` |
+| **OpenRouter TTS** | Good | Free models | `OPENROUTER_API_KEY` |
 | **xAI TTS** | Excellent | Paid | `XAI_API_KEY` |
 | **DeepInfra TTS** | Good | Paid | `DEEPINFRA_API_KEY` |
 | **NeuTTS** | Good | Free (local) | None needed |
@@ -44,69 +45,115 @@ Convert text to speech with eleven providers:
 ```yaml
 # In ~/.hermes/config.yaml
 tts:
-  provider: "edge"              # "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "deepinfra" | "neutts" | "kittentts" | "piper" — or "nous" for the managed Tool Gateway (written when you pick Nous Subscription in `hermes tools`)
-  speed: 1.0                    # Global speed multiplier (provider-specific settings override this)
+  provider: "edge"              # built-in name, custom/plugin name, or "nous" for the managed Tool Gateway
+  voice: ""                     # generic plugin fallback; built-ins use their own voice field
+  model: ""                     # generic plugin fallback; built-ins use their own model field
+  speed: 1.0                    # global fallback for speed-capable providers
+  output_format: ""             # blank follows provider/platform delivery
+  max_text_length: null         # null uses each provider's documented or configured cap
+  streaming:
+    provider: ""                # blank follows tts.provider; "auto" selects the first usable streamer
+    min_len: 20                 # CJK voice setups commonly use ~6
   edge:
-    voice: "en-US-AriaNeural"   # 322 voices, 74 languages
-    speed: 1.0                  # Converted to rate percentage (+/-%)
+    voice: "en-US-AriaNeural"
+    speed: null                 # provider override of tts.speed
+    max_text_length: null
   elevenlabs:
-    voice_id: "pNInz6obpgDQGcFmaJgB"  # Adam
+    voice_id: "pNInz6obpgDQGcFmaJgB"
     model_id: "eleven_multilingual_v2"
+    streaming_model_id: "eleven_flash_v2_5"
+    speed: null                 # 0.7–1.2; omitted for Eleven v3 models
+    base_url: ""
+    wss_url: ""
+    max_text_length: null
   openai:
     model: "gpt-4o-mini-tts"
-    voice: "alloy"              # alloy, echo, fable, onyx, nova, shimmer
-    base_url: "https://api.openai.com/v1"  # Override for OpenAI-compatible TTS endpoints
-    pcm_sample_rate: 24000      # Streaming PCM rate expected from the endpoint (auto-overridden by X-Audio-Sample-Rate)
-    speed: 1.0                  # 0.25 - 4.0
-    # language: "es"            # Sent as lang_code — only for OpenAI-compatible endpoints that support it (e.g. Kokoro)
-    # consent_attestation: "I have the speaker's consent"  # Required by some OpenAI-compatible servers for cloned voices
-  streaming:
-    min_len: 20                 # Streaming TTS: shortest first sentence (chars) spoken on its own; CJK setups use ~6
+    voice: "alloy"
+    base_url: ""
+    speed: null
+    language: ""                # sent as lang_code to compatible servers that support it
+    instructions: ""            # default voice-design guidance for this provider
+    response_format: ""         # blank follows the output path
+    pcm_sample_rate: 24000
+    consent_attestation: ""
+    max_text_length: null
+  deepinfra:
+    model: ""                   # blank selects the first TTS model in the live catalog
+    voice: "default"
+    base_url: ""
+    speed: null
+    language: ""
+    instructions: ""
+    response_format: ""
+    max_text_length: null
+  openrouter:
+    model: "deepgram/flux-tts:free"
+    voice: "flux-alexis-en"
+    base_url: ""
+    speed: null                 # honored only by OpenRouter models that support speed
+    response_format: ""         # "mp3" or "pcm"; pcm is delivered in a WAV container
+    max_text_length: null
   minimax:
-    region: "global"           # "global" or "cn"; see selection rules below
-    model: "speech-02-hd"     # speech-02-hd (default), speech-02-turbo
-    voice_id: "English_expressive_narrator"  # See https://platform.minimax.io/faq/system-voice-id
-    speed: 1                    # 0.5 - 2.0
-    vol: 1                      # 0 - 10
-    pitch: 0                    # -12 - 12
-    # base_url: "https://tts.example/v1/t2a_v2"  # Optional endpoint override for the selected region
+    region: ""                  # blank auto-selects; otherwise "global" or "cn"
+    base_url: ""
+    model: "speech-02-hd"
+    voice_id: "English_expressive_narrator"
+    group_id: ""
+    speed: null
+    vol: 1.0
+    pitch: 0
+    emotion: "neutral"
+    sample_rate: 32000
+    bitrate: 128000
+    max_text_length: null
   mistral:
     model: "voxtral-mini-tts-2603"
-    voice_id: "c69964a6-ab8b-4f8a-9465-ec0925096ec8"  # Paul - Neutral (default)
+    voice_id: "c69964a6-ab8b-4f8a-9465-ec0925096ec8"
+    base_url: ""
+    max_text_length: null
   gemini:
-    model: "gemini-2.5-flash-preview-tts"  # or gemini-3.1-flash-tts-preview
-    voice: "Kore"               # 30 prebuilt voices: Zephyr, Puck, Kore, Enceladus, Gacrux, etc.
-    audio_tags: false           # Enable hidden Gemini 3.1 TTS audio-tag insertion
-    persona_prompt_file: ""      # Optional Markdown/text file with Gemini voice direction
+    model: "gemini-2.5-flash-preview-tts"
+    voice: "Kore"
+    base_url: ""
+    audio_tags: false
+    persona_prompt_file: ""
+    max_text_length: null
   xai:
-    voice_id: "eve"             # or a custom voice ID — see docs below
-    language: "en"              # BCP-47 code (e.g. "en", "pt-BR") or "auto" for detection
-    speed: 1.0                  # 0.7–1.5, playback speed (default: 1.0)
-    auto_speech_tags: false     # insert expressive audio tags via LLM rewrite
-    text_normalization: false   # normalize numbers/abbreviations/symbols to spoken form
-    optimize_streaming_latency: 0  # 0–2, trades quality for lower latency (default: 0)
-    sample_rate: 24000          # 22050 / 24000 (default) / 44100 / 48000
-    bit_rate: 128000            # MP3 bitrate; only applies when codec=mp3
-    # base_url: "https://api.x.ai/v1"   # Override via XAI_BASE_URL env var
+    voice_id: "eve"
+    language: "en"
+    speed: null                 # 0.7–1.5
+    auto_speech_tags: false
+    text_normalization: false
+    optimize_streaming_latency: 0
+    sample_rate: 24000
+    bit_rate: 128000
+    base_url: ""
+    streaming_url: "wss://api.x.ai/v1/tts"
+    max_text_length: null
   neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
-    device: cpu
+    ref_audio: ""
+    ref_text: ""
+    model: "neuphonic/neutts-air-q4-gguf"
+    device: "cpu"
+    max_text_length: null
   kittentts:
-    model: KittenML/kitten-tts-nano-0.8-int8   # 25MB int8; also: kitten-tts-micro-0.8 (41MB), kitten-tts-mini-0.8 (80MB)
-    voice: Jasper                               # Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo
-    speed: 1.0                                  # 0.5 - 2.0
-    clean_text: true                            # Expand numbers, currencies, units
+    model: "KittenML/kitten-tts-nano-0.8-int8"
+    voice: "Jasper"
+    speed: null
+    clean_text: true
+    max_text_length: null
   piper:
-    voice: en_US-lessac-medium                  # voice name (auto-downloaded) OR absolute path to .onnx
-    # voices_dir: ''                            # default: ~/.hermes/cache/piper-voices/
-    # use_cuda: false                           # requires onnxruntime-gpu
-    # length_scale: 1.0                         # 2.0 = twice as slow
-    # noise_scale: 0.667
-    # noise_w_scale: 0.8
-    # volume: 1.0                               # 0.5 = half as loud
-    # normalize_audio: true
+    voice: "en_US-lessac-medium"
+    voices_dir: ""
+    use_cuda: false
+    length_scale: 1.0           # 2.0 = twice as slow
+    noise_scale: 0.667
+    noise_w_scale: 0.8
+    volume: 1.0
+    normalize_audio: true
+    speaker_id: 0
+    max_text_length: null
+  providers: {}                 # command and plugin provider settings
 ```
 
 MiniMax TTS selects its region, endpoint, and credential together:
@@ -116,7 +163,9 @@ MiniMax TTS selects its region, endpoint, and credential together:
 - If `region` is omitted, `MINIMAX_API_KEY` keeps precedence for backward compatibility. If only `MINIMAX_CN_API_KEY` is configured, Hermes selects `cn`.
 - An explicitly selected region must have its matching credential. Hermes never borrows the other region's key. A `base_url` override does not change the selected credential, and an override pointing at the other region's official endpoint is rejected.
 
-**Speed control**: The global `tts.speed` value applies to all providers by default. Each provider can override it with its own `speed` setting (e.g., `tts.openai.speed: 1.5`). Provider-specific speed takes precedence over the global value. Default is `1.0` (normal speed).
+**Speed control**: `tts.speed` is the global fallback for backends that implement speed: Edge, ElevenLabs (except Eleven v3), OpenAI and DeepInfra's OpenAI-compatible path, xAI, MiniMax's `t2a_v2` endpoint, OpenRouter models that honor the field, KittenTTS, and command/plugin providers that consume the corresponding argument or placeholder. A provider's `speed` overrides the global value; a per-call `speed` overrides both. Providers without native speed control are not advertised as honoring it.
+
+`tts.output_format` is the default for command and plugin providers; a provider-specific command/plugin value overrides it, and an explicit `output_path` suffix wins. Built-in API formats use their provider's `response_format` or native output path. `tts.max_text_length` is a global fallback; a positive `tts.<provider>.max_text_length` takes precedence, and blank/null values retain provider defaults.
 
 ### Gemini Persona Prompts
 
@@ -167,6 +216,8 @@ Each provider has a documented per-request input-character cap. Hermes splits lo
 | MiniMax | 10000 |
 | Mistral | 4000 |
 | Google Gemini | 32000 |
+| DeepInfra | 4000 (conservative across the live catalog) |
+| OpenRouter | 4000 (conservative across supported models) |
 | ElevenLabs | Model-aware (see below) |
 | NeuTTS | 2000 |
 | KittenTTS | 2000 |
@@ -306,7 +357,7 @@ tts:
       output_format: wav
 ```
 
-**Supported `output_format` values:** `mp3` (default), `wav`, `ogg`, `flac`, `m4a`, `aac`, `amr`, `opus`. Your command must actually produce that format (e.g. via `ffmpeg`); Hermes only validates the declared value and names the output file accordingly. An unknown value falls back to `mp3`. The chosen format is also exposed to the command as the `{format}` placeholder.
+**Supported `output_format` values:** `mp3` (default), `wav`, `ogg`, `flac`, `m4a`, `aac`, `amr`, `opus`. Your command must actually produce that format (e.g. via `ffmpeg`); Hermes validates the declared value and names the output file accordingly. An explicit `output_path` with one of these suffixes wins over `output_format`; a missing or unsupported suffix uses the configured format. The effective format is exposed to the command as `{format}`.
 
 **Subprocess environment:** command providers (TTS and STT) run with Hermes secrets scrubbed from the child environment — gateway bot tokens, LLM provider API keys, and internal relay credentials are removed; `PATH`, `HOME`, locale, and other normal variables are kept. If your command template needs its own API key from the environment (e.g. a `curl` one-liner), list the variable names under `env_passthrough` in the provider config:
 
@@ -353,7 +404,7 @@ Your command template can reference these placeholders. Hermes substitutes them 
 | `{input_path}`   | Path to the temp UTF-8 text file Hermes wrote        |
 | `{text_path}`    | Alias for `{input_path}`                             |
 | `{output_path}`  | Path the command must write audio to                 |
-| `{format}`       | `mp3` / `wav` / `ogg` / `flac`                       |
+| `{format}`       | Effective command output format                       |
 | `{voice}`        | `tts.providers.<name>.voice`, empty when unset       |
 | `{model}`        | `tts.providers.<name>.model`                         |
 | `{speed}`        | Resolved speed multiplier (provider or global)       |
@@ -365,7 +416,7 @@ Use `{{` and `}}` for literal braces.
 | Key                | Default | Meaning                                                                                                    |
 |--------------------|---------|------------------------------------------------------------------------------------------------------------|
 | `timeout`          | `120`   | Idle seconds; stdout or stderr output resets the deadline. The process tree is killed after inactivity (Unix `killpg`, Windows `taskkill /T`). |
-| `output_format`    | `mp3`   | One of `mp3` / `wav` / `ogg` / `flac`. Auto-inferred from the output extension if Hermes picks a path.      |
+| `output_format`    | `mp3`   | One of `mp3` / `wav` / `ogg` / `flac` / `m4a` / `aac` / `amr` / `opus`; a recognized explicit output-path suffix takes precedence. |
 | `voice_compatible` | `false` | When `true`, Hermes converts MP3/WAV output to Opus/OGG via ffmpeg so Telegram renders a voice bubble.      |
 | `max_text_length`  | `5000`  | Maximum input characters per command invocation; longer text is split into ordered chunks.                  |
 | `voice` / `model`  | empty   | Passed to the command as placeholder values only.                                                           |
@@ -448,7 +499,20 @@ def register(ctx):
     ctx.register_tts_provider(MyTTSProvider())
 ```
 
-Enable it (`hermes plugins enable my-tts`), point `tts.provider` at it (`tts.provider: my-tts` in `config.yaml`), and the `text_to_speech` tool will route through your plugin.
+Enable it (`hermes plugins enable my-tts`), point `tts.provider` at it, and configure it in the canonical provider block:
+
+```yaml
+tts:
+  provider: my-tts
+  providers:
+    my-tts:
+      voice: af_sky
+      model: my-model
+      speed: 1.1
+      output_format: wav
+```
+
+These four values override the corresponding global `tts.voice`, `tts.model`, `tts.speed`, and `tts.output_format` fallbacks. Missing plugin values use the global value when set and then the provider's own default.
 
 #### Optional hooks
 

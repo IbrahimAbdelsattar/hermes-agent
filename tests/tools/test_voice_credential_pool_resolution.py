@@ -31,7 +31,7 @@ def _clean_env(monkeypatch):
         "GROQ_API_KEY", "MISTRAL_API_KEY", "ELEVENLABS_API_KEY",
         "DEEPINFRA_API_KEY", "MINIMAX_API_KEY", "GEMINI_API_KEY",
         "GOOGLE_API_KEY", "XAI_API_KEY", "OPENAI_API_KEY",
-        "VOICE_TOOLS_OPENAI_KEY",
+        "VOICE_TOOLS_OPENAI_KEY", "FAL_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
     yield
@@ -169,6 +169,29 @@ class TestMultiplexScope:
             lp.assert_not_called()
         finally:
             ss.reset_secret_scope(token)
+
+    def test_unscoped_multiplex_read_does_not_borrow_launch_env(self, monkeypatch):
+        from agent import secret_scope as ss
+
+        monkeypatch.setenv("MISTRAL_API_KEY", "launch-profile-key")
+        ss.set_multiplex_active(True)
+        assert resolve_provider_secret("MISTRAL_API_KEY", "mistral") == ""
+
+    def test_unscoped_single_profile_read_keeps_env_behavior(self, monkeypatch):
+        from agent import secret_scope as ss
+
+        monkeypatch.setenv("MISTRAL_API_KEY", "single-profile-key")
+        ss.set_multiplex_active(False)
+        assert resolve_provider_secret("MISTRAL_API_KEY", "mistral") == "single-profile-key"
+
+    def test_fal_dotenv_fallback_is_blocked_in_multiplex(self, monkeypatch):
+        from agent import secret_scope as ss
+        from tools import tool_backend_helpers
+
+        ss.set_multiplex_active(True)
+        with patch.object(tool_backend_helpers, "_dotenv_value", return_value="launch-key") as dotenv:
+            assert tool_backend_helpers.fal_key_is_configured() is False
+        dotenv.assert_not_called()
 
 
 class TestToolWiring:

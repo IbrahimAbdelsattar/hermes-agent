@@ -142,25 +142,37 @@ export const pickArabicVoice = (
         name.includes('mariam') ||
         name.includes('fatima') ||
         name.includes('zira') ||
-        name.includes('jenny');
-      return isFemale && v.lang.toLowerCase().includes('ar');
+        name.includes('jenny') ||
+        name.includes('google'); // Chrome's "Google عربي" is a female voice
+      return isFemale && (v.lang.toLowerCase().includes('ar') || name.includes('arabic') || name.includes('عربي'));
     });
     if (femaleArabic.length > 0) return femaleArabic[0];
 
     const anyArabicNonMale = voices.filter(
       (v) =>
-        v.lang.toLowerCase().includes('ar') &&
+        (v.lang.toLowerCase().includes('ar') || v.name.toLowerCase().includes('arabic') || v.name.toLowerCase().includes('عربي')) &&
         !v.name.toLowerCase().includes('male') &&
         !v.name.toLowerCase().includes('shakir') &&
         !v.name.toLowerCase().includes('tarik') &&
         !v.name.toLowerCase().includes('maged') &&
-        !v.name.toLowerCase().includes('hamed')
+        !v.name.toLowerCase().includes('hamed') &&
+        !v.name.toLowerCase().includes('bassel') &&
+        !v.name.toLowerCase().includes('naayf')
     );
     if (anyArabicNonMale.length > 0) return anyArabicNonMale[0];
     return undefined;
   }
 
-  // Jarvis: Male Arabic voices
+  // Jarvis: Male Arabic voices ONLY
+  const isExplicitMale = (name: string) =>
+    name.includes('male') ||
+    name.includes('shakir') ||
+    name.includes('tarik') ||
+    name.includes('maged') ||
+    name.includes('hamed') ||
+    name.includes('bassel') ||
+    name.includes('naayf');
+
   const maleArabicVoices = voices.filter((v) => {
     const name = v.name.toLowerCase();
     const isFemale =
@@ -172,23 +184,17 @@ export const pickArabicVoice = (
       name.includes('mariam') ||
       name.includes('fatima') ||
       name.includes('zira') ||
-      name.includes('jenny');
+      name.includes('jenny') ||
+      name.includes('google'); // Never pick Google عربي for Jarvis as it is female
     if (isFemale) return false;
 
-    return (
-      v.lang.toLowerCase().includes('ar') ||
-      name.includes('arabic') ||
-      name.includes('shakir') ||
-      name.includes('tarik') ||
-      name.includes('maged') ||
-      name.includes('hamed') ||
-      name.includes('bassel') ||
-      name.includes('naayf') ||
-      name.includes('male')
-    );
+    const isArabicLang = v.lang.toLowerCase().includes('ar') || name.includes('arabic') || name.includes('عربي');
+    return isArabicLang && isExplicitMale(name);
   });
 
   if (maleArabicVoices.length === 0) {
+    // If no explicit male Arabic voice exists in browser, return undefined so speakWithNabra
+    // cleanly falls through to backend Edge TTS ar-EG-ShakirNeural (authentic male neural voice).
     return undefined;
   }
 
@@ -198,18 +204,6 @@ export const pickArabicVoice = (
       (v.name.toLowerCase().includes('shakir') || v.name.toLowerCase().includes('male'))
   );
   if (maleEg) return maleEg;
-
-  const generalMale = maleArabicVoices.find(
-    (v) =>
-      v.name.toLowerCase().includes('shakir') ||
-      v.name.toLowerCase().includes('male') ||
-      v.name.toLowerCase().includes('tarik') ||
-      v.name.toLowerCase().includes('hamed') ||
-      v.name.toLowerCase().includes('maged') ||
-      v.name.toLowerCase().includes('bassel') ||
-      v.name.toLowerCase().includes('naayf')
-  );
-  if (generalMale) return generalMale;
 
   return maleArabicVoices[0];
 };
@@ -233,7 +227,8 @@ export const pickEnglishVoice = (
         name.includes('linda') ||
         name.includes('susan') ||
         name.includes('ava') ||
-        name.includes('emma');
+        name.includes('emma') ||
+        name.includes('aria');
       return isFemaleName && v.lang.toLowerCase().startsWith('en');
     });
     if (femaleEnglish.length > 0) return femaleEnglish[0];
@@ -244,13 +239,27 @@ export const pickEnglishVoice = (
         !v.name.toLowerCase().includes('male') &&
         !v.name.toLowerCase().includes('guy') &&
         !v.name.toLowerCase().includes('david') &&
-        !v.name.toLowerCase().includes('george')
+        !v.name.toLowerCase().includes('george') &&
+        !v.name.toLowerCase().includes('mark') &&
+        !v.name.toLowerCase().includes('oliver') &&
+        !v.name.toLowerCase().includes('daniel')
     );
     if (nonMale.length > 0) return nonMale[0];
     return undefined;
   }
 
-  // Jarvis: Male English voices
+  // Jarvis: Male English voices ONLY
+  const isExplicitMale = (name: string) =>
+    name.includes('male') ||
+    name.includes('david') ||
+    name.includes('guy') ||
+    name.includes('george') ||
+    name.includes('mark') ||
+    name.includes('oliver') ||
+    name.includes('daniel') ||
+    name.includes('ryan') ||
+    name.includes('james');
+
   const maleEnglishVoices = voices.filter((v) => {
     const name = v.name.toLowerCase();
     const isFemale =
@@ -263,9 +272,10 @@ export const pickEnglishVoice = (
       name.includes('linda') ||
       name.includes('susan') ||
       name.includes('ava') ||
-      name.includes('emma');
+      name.includes('emma') ||
+      name.includes('aria');
     if (isFemale) return false;
-    return v.lang.toLowerCase().startsWith('en');
+    return v.lang.toLowerCase().startsWith('en') && isExplicitMale(name);
   });
 
   if (maleEnglishVoices.length === 0) {
@@ -283,15 +293,15 @@ export const pickEnglishVoice = (
   );
   if (britishMale) return britishMale;
 
-  const naturalMale = maleEnglishVoices.find(
+  const generalMale = maleEnglishVoices.find(
     (v) =>
       v.name.toLowerCase().includes('david') ||
       v.name.toLowerCase().includes('mark') ||
       v.name.toLowerCase().includes('guy') ||
-      v.name.toLowerCase().includes('natural') ||
+      v.name.toLowerCase().includes('george') ||
       v.name.toLowerCase().includes('male')
   );
-  if (naturalMale) return naturalMale;
+  if (generalMale) return generalMale;
 
   return maleEnglishVoices[0];
 };

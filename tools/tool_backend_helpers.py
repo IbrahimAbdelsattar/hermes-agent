@@ -92,12 +92,19 @@ def resolve_modal_backend_state(modal_mode: object | None, *, has_direct: bool,
 
 
 def _scoped_credential(name: str) -> str:
-    """Read a credential env var under the active profile secret scope; raw env fallback only
-    if ``agent.secret_scope`` cannot import (a packaging edge must never lose the key)."""
+    """Read through the profile secret scope; preserve raw env only outside multiplex mode."""
     try:
-        from agent.secret_scope import get_secret
+        from agent.secret_scope import get_secret, is_multiplex_active
+    except ImportError:
+        return (os.getenv(name, "") or "").strip()
+    try:
         return (get_secret(name, "") or "").strip()
-    except Exception:  # pragma: no cover — secret_scope is in-repo
+    except Exception:
+        try:
+            if is_multiplex_active():
+                return ""
+        except Exception:
+            return ""
         return (os.getenv(name, "") or "").strip()
 
 
@@ -272,6 +279,16 @@ def selection_error(section: str, selection_name: str, failure: str) -> str:
 
 
 def fal_key_is_configured() -> bool:
-    """True when FAL_KEY is set (scope/env, else ``.env`` for CLI paths that run before dotenv
-    loads) to a non-whitespace value, so tool-side and CLI setup-time checks agree."""
-    return bool(_scoped_credential("FAL_KEY") or _dotenv_value("FAL_KEY"))
+    """True when the active profile has a FAL_KEY credential."""
+    if _scoped_credential("FAL_KEY"):
+        return True
+    try:
+        from agent.secret_scope import is_multiplex_active
+    except ImportError:
+        return bool(_dotenv_value("FAL_KEY"))
+    try:
+        if is_multiplex_active():
+            return False
+    except Exception:
+        return False
+    return bool(_dotenv_value("FAL_KEY"))

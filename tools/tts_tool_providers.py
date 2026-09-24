@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from tools.tts_tool_delivery import _origin, _section, _wrap_pcm_as_wav, _write_wav_bytes_as
+from tools.tts_tool_delivery import _origin, _provider_speed, _section, _wrap_pcm_as_wav, _write_wav_bytes_as
 from tools.xai_http import hermes_xai_user_agent
 
 logger = logging.getLogger("tools.tts_tool")
@@ -28,6 +28,8 @@ logger = logging.getLogger("tools.tts_tool")
 DEFAULT_EDGE_VOICE = "en-US-AriaNeural"
 DEFAULT_ELEVENLABS_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam
 DEFAULT_ELEVENLABS_MODEL_ID = "eleven_multilingual_v2"
+DEFAULT_ELEVENLABS_SPEED_MIN = 0.7
+DEFAULT_ELEVENLABS_SPEED_MAX = 1.2
 DEFAULT_ELEVENLABS_STREAMING_MODEL_ID = "eleven_flash_v2_5"
 DEFAULT_MINIMAX_MODEL = "speech-02-hd"
 DEFAULT_MINIMAX_VOICE_ID = "English_expressive_narrator"
@@ -70,9 +72,10 @@ def _config_bool(value: Any, default: bool = False) -> bool:
 
 
 def _tts_response_format_from_path(output_path: str) -> str:
-    """Pick an OpenAI-style response format (opus/wav/flac/mp3) from the output extension."""
-    formats = ((".ogg", "opus"), (".wav", "wav"), (".flac", "flac"))
-    return next((fmt for ext, fmt in formats if output_path.endswith(ext)), "mp3")
+    """Pick an OpenAI-style response format from the output extension."""
+    formats = ((".ogg", "opus"), (".opus", "opus"), (".wav", "wav"),
+               (".flac", "flac"), (".aac", "aac"))
+    return next((fmt for ext, fmt in formats if output_path.lower().endswith(ext)), "mp3")
 
 
 def _require_key(env_var: str, provider_id: str, hint: str) -> str:
@@ -196,7 +199,7 @@ def _rewrite_with_auxiliary_model(
 async def _generate_edge_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
     edge_tts = _origin()._import_edge_tts()
     edge_config = tts_config.get("edge") or {}
-    speed = float(edge_config.get("speed", tts_config.get("speed", 1.0)))
+    speed = _provider_speed(tts_config, "edge")
     kwargs = {"voice": edge_config.get("voice", DEFAULT_EDGE_VOICE)}
     if speed != 1.0:
         kwargs["rate"] = f"{round((speed - 1.0) * 100):+d}%"
@@ -220,10 +223,18 @@ def _generate_elevenlabs(text: str, output_path: str, tts_config: Dict[str, Any]
     api_key = _require_key("ELEVENLABS_API_KEY", "elevenlabs", "Get one at https://elevenlabs.io/")
     el_config = tts_config.get("elevenlabs") or {}
     client = _origin()._import_elevenlabs()(api_key=api_key, **_elevenlabs_environment_kwargs(el_config))
-    audio_generator = client.text_to_speech.convert(
-        text=text, voice_id=el_config.get("voice_id", DEFAULT_ELEVENLABS_VOICE_ID),
-        model_id=el_config.get("model_id", DEFAULT_ELEVENLABS_MODEL_ID),
-        output_format="opus_48000_64" if output_path.endswith(".ogg") else "mp3_44100_128")
+    model_id = str(el_config.get("model_id") or DEFAULT_ELEVENLABS_MODEL_ID)
+    convert_kwargs = {
+        "text": text, "voice_id": el_config.get("voice_id", DEFAULT_ELEVENLABS_VOICE_ID),
+        "model_id": model_id,
+        "output_format": "opus_48000_64" if output_path.endswith(".ogg") else "mp3_44100_128",
+    }
+    if "v3" not in model_id.lower():
+        speed = _clamped_number(_provider_speed(tts_config, "elevenlabs"), float,
+                                DEFAULT_ELEVENLABS_SPEED_MIN, DEFAULT_ELEVENLABS_SPEED_MAX)
+        if speed != 1.0:
+            convert_kwargs["speed"] = speed
+    audio_generator = client.text_to_speech.convert(**convert_kwargs)
     with open(output_path, "wb") as f:
         f.writelines(audio_generator)
     return output_path
@@ -304,7 +315,7 @@ def _generate_xai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -
         text = _apply_xai_auto_speech_tags(text)
     # ``tts.xai.<knob>`` overrides global ``tts.<knob>``; out-of-range values are clamped into the
     # API's band rather than 400ing the request.
-    speed = _clamped_number(xai_config.get("speed", tts_config.get("speed")), float,
+    speed = _clamped_number(_provider_speed(tts_config, "xai"), float,
                             DEFAULT_XAI_SPEED_MIN, DEFAULT_XAI_SPEED_MAX)
     optimize_streaming_latency = _clamped_number(
         xai_config.get("optimize_streaming_latency", tts_config.get("optimize_streaming_latency")),
@@ -410,7 +421,8 @@ def _generate_minimax_tts(text: str, output_path: str, tts_config: Dict[str, Any
         payload = {
             "model": model, "text": text,
             "voice_setting": {
-                "voice_id": voice_id, "speed": mm_config.get("speed", 1.0), "vol": mm_config.get("vol", 1.0),
+                "voice_id": voice_id, "speed": _provider_speed(tts_config, "minimax"),
+                "vol": mm_config.get("vol", 1.0),
                 "pitch": mm_config.get("pitch", 0), "emotion": mm_config.get("emotion", "neutral"),
             },
             "audio_setting": {

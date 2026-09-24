@@ -8,7 +8,9 @@ import {
   getStatus,
   restartGateway,
   saveMemoryProviderConfig,
+  setApiRequestConnection,
   setApiRequestProfile,
+  setTtsLease,
   speakText,
   transcribeAudio,
   updateHermes
@@ -28,6 +30,7 @@ describe('backend action helpers are profile-scoped', () => {
 
   afterEach(() => {
     setApiRequestProfile(null)
+    setApiRequestConnection(null)
     delete (window as { hermesDesktop?: unknown }).hermesDesktop
   })
 
@@ -67,6 +70,16 @@ describe('backend action helpers are profile-scoped', () => {
   // profile's config in the settings UI but historically called the backend
   // without a profile scope, so playback used the default profile's TTS/voice
   // config instead of the active one (#53441).
+  it('routes TTS lease calls through an explicit connection/profile owner', () => {
+    void setTtsLease('desktop:read-aloud', true, { connectionId: 'gw-bots', profile: 'bot-adam' })
+
+    expect(api.mock.calls.at(-1)?.[0]).toMatchObject({
+      connectionId: 'gw-bots',
+      path: '/api/audio/tts-lease',
+      profile: 'bot-adam'
+    })
+  })
+
   it('forwards the active profile to audio endpoints', () => {
     setApiRequestProfile('jarvis')
 

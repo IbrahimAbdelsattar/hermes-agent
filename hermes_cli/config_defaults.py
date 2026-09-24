@@ -1035,12 +1035,18 @@ DEFAULT_CONFIG = {
     # Text-to-speech. Each provider accepts an optional `max_text_length:` override for the
     # per-request input-character cap; omit to use the provider's documented limit (OpenAI 4096, xAI
     # 15000, MiniMax 10000, ElevenLabs 5k-40k model-aware, Gemini 32000, Edge 5000, Mistral 4000,
-    # OpenRouter 4000 conservative, NeuTTS/KittenTTS 2000).
+    # DeepInfra/OpenRouter 4000 conservative, NeuTTS/KittenTTS 2000).
     "tts": {
         # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" |
         # "gemini" | "deepinfra" | "openrouter" | "neutts" (local) | "kittentts" (local) | "piper" (local)
         "provider": "edge",
+        "voice": "",
+        "model": "",
+        "speed": 1.0,
+        "output_format": "",
+        "max_text_length": None,
         "streaming": {
+            "provider": "",
             # Shortest first sentence (chars) spoken on its own by streaming TTS; shorter openers
             # ride with the next sentence. 20 suits English; CJK voice setups use ~6.
             "min_len": 20,
@@ -1048,55 +1054,93 @@ DEFAULT_CONFIG = {
         "edge": {
             # Popular: AriaNeural, JennyNeural, AndrewNeural, BrianNeural, SoniaNeural
             "voice": "en-US-AriaNeural",
+            "speed": None,
+            "max_text_length": None,
         },
         "elevenlabs": {
             "voice_id": "pNInz6obpgDQGcFmaJgB",  # Adam
             "model_id": "eleven_multilingual_v2",
+            "streaming_model_id": "eleven_flash_v2_5",
+            "speed": None,
+            "base_url": "",
+            "wss_url": "",
+            "max_text_length": None,
         },
         "openai": {
             "model": "gpt-4o-mini-tts",
             # gpt-4o-mini-tts voices: alloy, ash, ballad, cedar, coral, echo, fable, marin, nova,
             # onyx, sage, shimmer, verse
             "voice": "alloy",
+            "base_url": "",
+            "speed": None,
+            "language": "",
+            "instructions": "",
+            "response_format": "",
             # Forwarded verbatim in the request body for OpenAI-compatible servers whose cloned
             # voices demand it (400 consent_required otherwise); "" sends nothing.
             "consent_attestation": "",
             # Raw PCM rate for streaming playback. OpenAI emits 24 kHz; a compatible endpoint that
             # reports its rate (X-Audio-Sample-Rate header) overrides this automatically.
             "pcm_sample_rate": 24000,
+            "max_text_length": None,
         },
         "gemini": {
             "model": "gemini-2.5-flash-preview-tts",
             "voice": "Kore",
+            "base_url": "",
             # Gemini 3.1: aux-model rewrite inserts [audio tags] into the TTS script only.
             "audio_tags": False,
             # Optional local text file with performance direction; may include a `{transcript}`
             # placeholder, else the live transcript is appended.
             "persona_prompt_file": "",
+            "max_text_length": None,
         },
         "xai": {
             "voice_id": "eve",  # or a custom voice ID (docs.x.ai custom voices)
             "language": "en",  # BCP-47 code ("en", "pt-BR") or "auto"
-            "speed": 1.0,  # 0.7–1.5
-            "auto_speech_tags": False,  # insert expressive audio tags via LLM rewrite
-            "optimize_streaming_latency": 0,  # 0–2, trades quality for lower latency
-            "sample_rate": 24000,  # 22050 / 24000 / 44100 / 48000
-            "bit_rate": 128000,  # MP3 bitrate; only applies when codec=mp3
+            "speed": None,
+            "auto_speech_tags": False,
+            "text_normalization": False,
+            "optimize_streaming_latency": 0,
+            "sample_rate": 24000,
+            "bit_rate": 128000,
+            "base_url": "",
+            "streaming_url": "wss://api.x.ai/v1/tts",
+            "max_text_length": None,
         },
         "mistral": {
             "model": "voxtral-mini-tts-2603",
             "voice_id": "c69964a6-ab8b-4f8a-9465-ec0925096ec8",  # Paul - Neutral
+            "base_url": "",
+            "max_text_length": None,
         },
-        "minimax": {"model": "speech-02-hd", "voice_id": "English_expressive_narrator"},
+        "minimax": {
+            "region": "",
+            "base_url": "",
+            "model": "speech-02-hd",
+            "voice_id": "English_expressive_narrator",
+            "group_id": "",
+            "speed": None,
+            "vol": 1.0,
+            "pitch": 0,
+            "emotion": "neutral",
+            "sample_rate": 32000,
+            "bitrate": 128000,
+            "max_text_length": None,
+        },
         "kittentts": {
             "model": "KittenML/kitten-tts-nano-0.8-int8",  # nano 25MB; micro 41MB; mini 80MB
             "voice": "Jasper",
+            "speed": None,
+            "clean_text": True,
+            "max_text_length": None,
         },
         "neutts": {
             "ref_audio": "",  # path to reference voice audio (empty = bundled default)
             "ref_text": "",   # path to reference voice transcript (empty = bundled default)
             "model": "neuphonic/neutts-air-q4-gguf",  # HuggingFace model repo
             "device": "cpu",  # cpu, cuda, or mps
+            "max_text_length": None,
         },
         "piper": {
             # Voice name (downloaded on first use) or absolute path to a .onnx file; list:
@@ -1104,11 +1148,25 @@ DEFAULT_CONFIG = {
             # (~/.hermes/cache/piper-voices/), use_cuda, length_scale (2.0 = twice as slow),
             # noise_scale, noise_w_scale, volume, normalize_audio.
             "voice": "en_US-lessac-medium",
+            "voices_dir": "",
+            "use_cuda": False,
+            "length_scale": 1.0,
+            "noise_scale": 0.667,
+            "noise_w_scale": 0.8,
+            "volume": 1.0,
+            "normalize_audio": True,
+            "speaker_id": 0,
+            "max_text_length": None,
         },
         "deepinfra": {
             "model": "",  # empty = first tts-tagged model from the live catalog
             "voice": "default",
-            # optional "base_url" key overrides DEEPINFRA_BASE_URL for TTS only
+            "base_url": "",
+            "speed": None,
+            "language": "",
+            "instructions": "",
+            "response_format": "",
+            "max_text_length": None,
         },
         "openrouter": {
             # Free TTS ids: "deepgram/flux-tts:free" (voices flux-*-en, default
@@ -1116,9 +1174,12 @@ DEFAULT_CONFIG = {
             # id, default from the official docs example). Uses OPENROUTER_API_KEY.
             "model": "deepgram/flux-tts:free",
             "voice": "flux-alexis-en",
-            # optional "api_key" overrides OPENROUTER_API_KEY; optional "base_url"
-            # overrides https://openrouter.ai/api/v1 for TTS only.
+            "base_url": "",
+            "speed": None,
+            "response_format": "",
+            "max_text_length": None,
         },
+        "providers": {},
     },
 
     "stt": {

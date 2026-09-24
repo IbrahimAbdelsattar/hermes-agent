@@ -104,6 +104,16 @@ export function stopOpenRouterAudio(): void {
  * whether to fall back — a silent failure must never count as speech.
  */
 export function playAudioDataUrl(dataUrl: string): Promise<boolean> {
+  // Mutual exclusion: stop any active speech synthesis before playing audio
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      // ignore
+    }
+  }
+  stopOpenRouterAudio();
+
   return new Promise<boolean>((resolve) => {
     let audio: HTMLAudioElement;
     try {
@@ -331,10 +341,11 @@ export class TtsPrefetchPipeline {
     return texts;
   }
 
-  /** Cancel all pending fetches (barge-in / mute / new message). */
+  /** Cancel all pending fetches and stop any active audio playback. */
   cancel(): void {
     this.cancelled = true;
     this.queue = [];
+    stopOpenRouterAudio();
   }
 
   /**

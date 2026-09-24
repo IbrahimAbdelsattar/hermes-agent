@@ -11,6 +11,7 @@ from .method_ctx import HandlerRegistry, bind_module
 
 _registry = HandlerRegistry()
 method = _registry.method
+_profile_scoped = _registry.profile_scoped
 
 
 # ── Voice state: HERMES_VOICE / HERMES_VOICE_TTS are runtime-only env flags (never config.yaml)
@@ -19,6 +20,57 @@ method = _registry.method
 _voice_sid_lock = threading.Lock()
 _voice_event_sid: str = ""
 _voice_wake_owner: "Optional[Transport]" = None
+_voice_state_lock = threading.RLock()
+_voice_state_by_profile: dict[str, dict[str, bool]] = {}
+_voice_active_owner: tuple[str, str, bool] | None = None
+
+
+def _voice_owner(*, background: bool = False) -> tuple[str, bool]:
+    """Return the active profile key and whether it is a served, non-launch profile."""
+    from hermes_constants import get_hermes_home, get_process_hermes_home, hermes_home_key
+
+    home = str(get_hermes_home())
+    key = hermes_home_key(home)
+    named = key != hermes_home_key(get_process_hermes_home())
+    if background:
+        from agent.secret_scope import current_secret_scope
+        from hermes_constants import get_hermes_home_override
+        if not get_hermes_home_override() and current_secret_scope() is None:
+            with _voice_state_lock:
+                active = _voice_active_owner
+            if active is not None:
+                return active[1], active[2]
+    return key, named
+
+
+def _remember_voice_owner() -> None:
+    global _voice_active_owner
+    from hermes_constants import get_hermes_home
+    key, named = _voice_owner()
+    with _voice_state_lock:
+        _voice_active_owner = (str(get_hermes_home()), key, named)
+
+
+def _voice_flag(env_name: str, field: str) -> bool:
+    key, named = _voice_owner()
+    if named:
+        with _voice_state_lock:
+            enabled = bool(_voice_state_by_profile.get(key, {}).get(field, False))
+    else:
+        enabled = os.environ.get(env_name, "").strip() == "1"
+    if enabled:
+        _remember_voice_owner()
+    return enabled
+
+
+def _set_voice_flag(env_name: str, field: str, value: bool) -> None:
+    key, named = _voice_owner()
+    if named:
+        with _voice_state_lock:
+            _voice_state_by_profile.setdefault(key, {})[field] = bool(value)
+    else:
+        os.environ[env_name] = "1" if value else "0"
+    _remember_voice_owner()
 
 
 def _caller_transport():
@@ -41,16 +93,17 @@ def _resume_voice_wake() -> None:
 
 
 def _voice_mode_enabled() -> bool:
-    return os.environ.get("HERMES_VOICE", "").strip() == "1"
+    return _voice_flag("HERMES_VOICE", "mode")
 
 
 def _voice_tts_enabled() -> bool:
-    return os.environ.get("HERMES_VOICE_TTS", "").strip() == "1"
+    return _voice_flag("HERMES_VOICE_TTS", "tts")
 
 
 def _end_voice_chat(*, stop_loop: bool, stop_tts: bool) -> None:
     """Flip voice + TTS off; optionally halt the continuous loop / cut live TTS (best-effort)."""
-    os.environ["HERMES_VOICE"] = os.environ["HERMES_VOICE_TTS"] = "0"
+    _set_voice_flag("HERMES_VOICE", "mode", False)
+    _set_voice_flag("HERMES_VOICE_TTS", "tts", False)
     if stop_loop:
         with contextlib.suppress(Exception):
             from hermes_cli.voice import stop_continuous
@@ -58,6 +111,12 @@ def _end_voice_chat(*, stop_loop: bool, stop_tts: bool) -> None:
     if stop_tts:
         with contextlib.suppress(Exception):
             _tts_stream_stop(user_barge=False)
+
+
+def _spawn_voice_thread(target, *, name: str, args: tuple = (), kwargs: dict | None = None) -> None:
+    from agent.memory_provider import spawn_context_thread
+    thread = spawn_context_thread(target, name=name, args=args, kwargs=kwargs, daemon=True)
+    thread.start()
 
 
 def _tts_lease_async(lease: str, active: bool) -> None:
@@ -69,7 +128,7 @@ def _tts_lease_async(lease: str, active: bool) -> None:
             (acquire_tts_lease if active else release_tts_lease)(lease)
         except Exception as e:
             logger.debug("voice: tts lease %s active=%s failed: %s", lease, active, e)
-    threading.Thread(target=_run, name=f"tts-lease-{lease}", daemon=True).start()
+    _spawn_voice_thread(_run, name=f"tts-lease-{lease}")
 
 
 def _running_sessions() -> list:
@@ -106,7 +165,8 @@ def _tts_stream_begin() -> Optional[queue.Queue]:
     _tts_stream_stop()
     text_queue: queue.Queue = queue.Queue()
     stop, done = threading.Event(), threading.Event()
-    threading.Thread(target=stream_tts_to_speaker, args=(text_queue, stop, done), daemon=True).start()
+    _spawn_voice_thread(stream_tts_to_speaker, name="tts-speaker",
+                        args=(text_queue, stop, done))
     global _tts_stream_state
     with _tts_stream_lock:
         _tts_stream_state = {"stop": stop, "done": done}
@@ -152,7 +212,7 @@ def _arm_full_duplex_listener() -> None:
         if _fd_listener_active:
             return
         _fd_listener_active = True
-    threading.Thread(target=_full_duplex_listener, daemon=True, name="voice-full-duplex").start()
+    _spawn_voice_thread(_full_duplex_listener, name="voice-full-duplex")
 
 
 def _arm_barge_listener_if_enabled() -> None:
@@ -259,24 +319,43 @@ def _deliver_fd_transcript(text: str) -> None:
     _voice_emit("voice.transcript", {"stop_phrase": True, "text": text} if is_stop else {"text": text})
 
 
+@contextlib.contextmanager
+def _voice_speaker_scope():
+    owner = _voice_owner(background=True)
+    if not owner[1]:
+        yield
+        return
+    from hermes_constants import get_hermes_home, get_hermes_home_override
+    with _voice_state_lock:
+        active = _voice_active_owner
+    current_home = str(get_hermes_home())
+    if get_hermes_home_override():
+        home = current_home
+    else:
+        home = active[0] if active else current_home
+    with _session_profile_runtime_scope({"profile_home": home}):
+        yield
+
+
 def _speak_text_with_barge(text: str) -> None:
     """speak_text registered in ``_fd_speak_pipelines`` so the listener can cut it / waits for it."""
-    from hermes_cli.voice import speak_text
-    stop, done = threading.Event(), threading.Event()
-    with _fd_listener_lock:
-        _fd_speak_pipelines.add((stop, done))
+    with _voice_speaker_scope():
+        from hermes_cli.voice import speak_text
+        stop, done = threading.Event(), threading.Event()
+        with _fd_listener_lock:
+            _fd_speak_pipelines.add((stop, done))
 
-    def _speak():
-        try:
-            speak_text(text, stop)
-        except TypeError:  # older wrapper without the stop_event parameter
-            speak_text(text)
-        finally:
-            done.set()
-            with _fd_listener_lock:
-                _fd_speak_pipelines.discard((stop, done))
-    threading.Thread(target=_speak, daemon=True).start()
-    _arm_barge_listener_if_enabled()
+        def _speak():
+            try:
+                speak_text(text, stop)
+            except TypeError:  # older wrapper without the stop_event parameter
+                speak_text(text)
+            finally:
+                done.set()
+                with _fd_listener_lock:
+                    _fd_speak_pipelines.discard((stop, done))
+        _spawn_voice_thread(_speak, name="voice-tts-speak")
+        _arm_barge_listener_if_enabled()
 
 
 def _voice_cfg_dict() -> dict:
@@ -376,7 +455,7 @@ def _wake_resume_if_owner(owner: "Transport", *, retry_seconds: float = 15.0,
         finally:
             with _wake_resume_retry_lock:
                 _wake_resume_retry_active = False
-    threading.Thread(target=_retry, daemon=True, name="wake-resume-retry").start()
+    _spawn_voice_thread(_retry, name="wake-resume-retry")
     return False
 
 
@@ -458,6 +537,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("wake.start")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """Arm the wake-word listener for the calling surface ("tui" | "gui"); ``{started: False,
     reason}`` when disabled/owned/not ready. ``persist: true`` (explicit gesture) also flips
@@ -519,6 +599,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("wake.stop")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """Stop this surface's listener; ``persist: true`` also writes ``wake_word.enabled: false``."""
     stopped = _release_wake_for_transport(_caller_transport())
@@ -534,6 +615,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("wake.pause")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """Release the mic (e.g. while the desktop's browser captures audio)."""
     try:
@@ -547,6 +629,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("wake.resume")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """Reclaim the mic after a pause; no-op if the listener isn't armed."""
     resumed = _wake_resume_if_owner(_caller_transport())
@@ -555,6 +638,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("wake.status")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     try:
         from tools.wake_word import (
@@ -594,6 +678,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("wake.feed")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """Push client-captured PCM (``pcm``/``pcm_b64``: base64 int16 mono LE, 16 kHz only) into the
     armed detector (``capture: "client"``) — mic-less remote backends can run openWakeWord."""
@@ -637,7 +722,7 @@ def _voice_toggle_status(rid, params: dict) -> dict:
 
 def _voice_toggle_mode(rid, params: dict) -> dict:
     enabled = params.get("action") == "on"
-    os.environ["HERMES_VOICE"] = "1" if enabled else "0"
+    _set_voice_flag("HERMES_VOICE", "mode", enabled)
     stop_hint = ""
     if enabled:
         # Spoken-stop hint for the client; sourced from voice.stop_phrases, empty when disabled.
@@ -662,7 +747,7 @@ def _voice_toggle_mode(rid, params: dict) -> dict:
 
 def _set_voice_tts(on: bool) -> None:
     """Flip TTS; off silences live speech. The lease pre-loads the engine (on) / releases it (off)."""
-    os.environ["HERMES_VOICE_TTS"] = "1" if on else "0"
+    _set_voice_flag("HERMES_VOICE_TTS", "tts", on)
     if not on:
         _tts_stream_stop(user_barge=False)
     _tts_lease_async("tui:voice-tts", on)
@@ -681,6 +766,7 @@ _VOICE_TOGGLE_ACTIONS = {
 
 
 @method("voice.toggle")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """CLI parity for ``/voice``: ``status``; ``on``/``off`` flip voice *mode* (off also tears
     down the continuous loop); ``tts`` toggles speech output (requires mode on)."""
@@ -712,6 +798,7 @@ def _vr_on_status(state):
 
 
 @method("voice.record")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     """VAD-bounded push-to-talk. ``start`` emits ``voice.transcript`` when silence stops the
     capture; ``stop`` forces transcription. Three silent captures emit ``no_speech_limit``."""
@@ -774,6 +861,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("voice.tts")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
     text = params.get("text", "")
     if not text:
@@ -782,7 +870,7 @@ def _(rid, params: dict) -> dict:
         import hermes_cli.voice  # noqa: F401  (a missing module must answer 5026, not die in a thread)
     except Exception as e:
         return _err(rid, 5026, "voice module not available" if isinstance(e, ImportError) else str(e))
-    threading.Thread(target=_speak_text_with_barge, args=(text,), daemon=True).start()
+    _spawn_voice_thread(_speak_text_with_barge, name="voice-tts", args=(text,))
     return _ok(rid, {"status": "speaking"})
 
 

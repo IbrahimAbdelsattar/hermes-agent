@@ -1,3 +1,8 @@
+import {
+  FIELD_DESCRIPTIONS as DEFAULT_FIELD_DESCRIPTIONS,
+  FIELD_LABELS as DEFAULT_FIELD_LABELS
+} from '@/app/settings/constants'
+
 import { defineLocale } from './define-locale'
 
 export const ar = defineLocale({
@@ -714,6 +719,7 @@ export const ar = defineLocale({
       }
     },
     fieldLabels: {
+      ...DEFAULT_FIELD_LABELS,
       model: 'النموذج الافتراضي',
       modelContextLength: 'يتجاوز نافذة السياق المكتشفة لنموذج المحادثة الرئيسي فقط (بالرموز). اتركه 0 لاستخدام القيمة المكتشفة للنموذج المحدد. لا يؤثر على النماذج المساعدة أو نماذج MoA.',
       fallbackProviders: 'النماذج الاحتياطية',
@@ -752,7 +758,17 @@ export const ar = defineLocale({
       'checkpoints.maxSnapshots': 'حد نقاط الحفظ',
       'voice.recordKey': 'اختصار الصوت',
       'voice.maxRecordingSeconds': 'أقصى مدة للتسجيل',
-      'voice.autoTts': 'قراءة الردود صوتياً',
+      'voice.autoTts': 'TTS التلقائي في الخلفية',
+      'voice.clientDirect': 'استدعاء المزود مباشرة',
+      'voice.beepEnabled': 'تنبيهات التسجيل',
+      'voice.beepVolume': 'مستوى تنبيه التسجيل',
+      'voice.thinkingSound': 'صوت أثناء التفكير',
+      'voice.silenceThreshold': 'حد الصمت أثناء التسجيل',
+      'voice.silenceDuration': 'مدة الصمت أثناء التسجيل',
+      'voice.bargeIn': 'المقاطعة الصوتية',
+      'voice.bargeInGraceSeconds': 'مهلة بدء المقاطعة',
+      'voice.bargeInThresholdMultiplier': 'مضاعف حد المقاطعة',
+      'voice.stopPhrases': 'عبارات الإيقاف الصوتي',
       'stt.enabled': 'تحويل الكلام إلى نص',
       'stt.provider': 'مزود تحويل الكلام إلى نص',
       'stt.local.model': 'نموذج التفريغ المحلي',
@@ -765,6 +781,11 @@ export const ar = defineLocale({
       'stt.elevenlabs.tagAudioEvents': 'وسم أحداث الصوت',
       'stt.elevenlabs.diarize': 'تمييز المتحدثين',
       'tts.provider': 'مزود تحويل النص إلى كلام',
+      'tts.speed': 'سرعة التشغيل الافتراضية',
+      'tts.outputFormat': 'صيغة الإخراج الافتراضية',
+      'tts.maxTextLength': 'حد النص الافتراضي',
+      'tts.streaming.minLen': 'أدنى طول للعبارة في البث',
+      'tts.streaming.provider': 'مزود البث الصوتي',
       'tts.edge.voice': 'صوت Edge',
       'tts.openai.model': 'نموذج OpenAI TTS',
       'tts.openai.voice': 'صوت OpenAI',
@@ -783,6 +804,11 @@ export const ar = defineLocale({
       'tts.kittentts.model': 'نموذج KittenTTS',
       'tts.kittentts.voice': 'صوت KittenTTS',
       'tts.piper.voice': 'صوت Piper',
+      'tts.openrouter.model': 'نموذج OpenRouter TTS',
+      'tts.openrouter.voice': 'صوت OpenRouter',
+      'tts.openrouter.speed': 'سرعة OpenRouter',
+      'tts.openrouter.baseUrl': 'الرابط الأساسي لـ OpenRouter',
+      'tts.openrouter.maxTextLength': 'حد نص OpenRouter',
       'memory.memoryEnabled': 'الذاكرة المستمرة',
       'memory.userProfileEnabled': 'ملف المستخدم',
       'memory.memoryCharLimit': 'ميزانية الذاكرة',
@@ -804,6 +830,7 @@ export const ar = defineLocale({
       'updates.nonInteractiveLocalChanges': 'تغييرات التحديث داخل التطبيق'
     },
     fieldDescriptions: {
+      ...DEFAULT_FIELD_DESCRIPTIONS,
       model: 'يستخدم في المحادثات الجديدة ما لم تختر نموذجاً مختلفاً من محرر الرسائل.',
       modelContextLength: 'اتركه 0 لاستخدام نافذة السياق المكتشفة للنموذج المحدد.',
       fallbackProviders: 'إدخالات احتياطية بصيغة provider:model لتجربتها إذا فشل النموذج الافتراضي.',
@@ -831,7 +858,18 @@ export const ar = defineLocale({
       'compression.enabled': 'يلخص السياق الأقدم عندما تكبر المحادثات.',
       'compression.codexGpt55Autoraise': 'يرفع عتبة الضغط إلى 85٪ لنماذج ChatGPT Codex OAuth المدعومة.',
       'auxiliary.compression.timeout': 'عدد الثواني لانتظار نموذج الضغط المساعد في كل استدعاء (الافتراضي 120). ارفعه للنماذج المحلية البطيئة.',
-      'voice.autoTts': 'ينطق ردود المساعد تلقائياً.',
+      'voice.autoTts': 'إعداد خلفي untuk الردود الصوتية التلقائية في CLI وبوابات المراسلة. يبقى مفتاح «قراءة الردود صوتياً» في سطح المكتب محلياً ومستقلاً.',
+      'voice.clientDirect': 'عند الاتصال عن بُعد، يستدعي سطح المكتب مزود الصوت مباشرةً بدلاً من تمرير الصوت عبر البوابة.',
+      'tts.speed': 'سرعة التشغيل الاحتياطية للمزودين الذين لا يحددون سرعة خاصة. 1.0 هي السرعة الطبيعية.',
+      'tts.outputFormat': 'حاوية الإخراج الافتراضية للصوت المركب، مع الالتزام بالصيغ التي يدعمها المزود.',
+      'tts.maxTextLength': 'الحد الافتراضي للأحرف في طلب TTS واحد. يُقسّم النص الأطول دون اقتطاع.',
+      'tts.streaming.minLen': 'أقصر جملة أولى يمكن للبث الصوتي تشغيلها وحدها.',
+      'tts.streaming.provider': 'تثبيت مزود البث أو اختيار تلقائي أو اتّباع مزود TTS المحدد.',
+      'tts.openrouter.model': 'معرّف نموذج OpenRouter TTS. يمكن إدخال نماذج جديدة خارج المقترحات.',
+      'tts.openrouter.voice': 'معرّف الصوت الذي يقبله نموذج OpenRouter TTS المحدد.',
+      'tts.openrouter.speed': 'سرعة التشغيل للنماذج التي تدعمها. 1.0 هي السرعة الطبيعية.',
+      'tts.openrouter.baseUrl': 'نقطة نهاية اختيارية لـ OpenRouter TTS.',
+      'tts.openrouter.maxTextLength': 'حد الأحرف لكل طلب OpenRouter؛ يُقسّم النص الأطول.',
       'tts.xai.voiceId': 'معرف صوت xAI مثل eve أو معرف صوت مخصص.',
       'tts.xai.language': 'رمز لغة النطق، مثل en.',
       'tts.neutts.device': 'جهاز الاستدلال المحلي لـ NeuTTS.',

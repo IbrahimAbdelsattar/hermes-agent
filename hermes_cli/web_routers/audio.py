@@ -63,6 +63,50 @@ def _unlink_quietly(path: str) -> None:
         pass
 
 
+def _result_audio_paths(result: Dict[str, Any]) -> List[str]:
+    candidates: List[Any] = []
+    reported = result.get("file_paths")
+    if isinstance(reported, (list, tuple)):
+        candidates.extend(reported)
+    single = result.get("file_path")
+    if isinstance(single, str):
+        candidates.append(single)
+
+    paths: List[str] = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        path = candidate.strip()
+        if not path:
+            continue
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(path)
+    return paths
+
+
+def _unlink_audio(paths: List[str]) -> None:
+    for path in paths:
+        _unlink_quietly(path)
+
+
+def _read_and_unlink_audio(paths: List[str]) -> bytes:
+    audio = bytearray()
+    try:
+        for path in paths:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(path)
+            with open(path, "rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    audio.extend(chunk)
+        return bytes(audio)
+    finally:
+        _unlink_audio(paths)
+
+
 async def _run_config_scoped(profile: Optional[str], fn):
     """Run ``fn()`` on a worker thread under the config-only profile scope.
 
@@ -219,23 +263,14 @@ async def get_elevenlabs_voices(profile: Optional[str] = None):
     The desktop UI uses this for the ``tts.elevenlabs.voice_id`` dropdown.
     Only non-secret voice metadata is returned; the API key stays server-side.
     """
-    # Config-only scope (await-safe): the key lookup reads the requested
-    # profile's .env, matching the profile the settings UI writes to.
-    with _config_profile_scope(profile):
-        api_key = (load_env().get("ELEVENLABS_API_KEY") or "").strip()
-    if not api_key:
-        # Fallback for env-only deployments — scope-aware: under multiplex
-        # os.environ may hold another profile's key, so honor the installed
-        # scope's verdict before touching the env.
-        try:
-            from agent.secret_scope import UnscopedSecretError, get_secret
+    from agent.secret_scope import get_secret
 
-            try:
-                api_key = (get_secret("ELEVENLABS_API_KEY") or "").strip()
-            except UnscopedSecretError:
-                api_key = (os.environ.get("ELEVENLABS_API_KEY") or "").strip()
-        except Exception:
-            api_key = (os.environ.get("ELEVENLABS_API_KEY") or "").strip()
+    with _config_profile_scope(profile):
+        api_key = (
+            load_env().get("ELEVENLABS_API_KEY")
+            or get_secret("ELEVENLABS_API_KEY", "")
+            or ""
+        ).strip()
     if not api_key:
         return {"available": False, "voices": []}
 
@@ -317,10 +352,16 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
     else:
         is_arabic_text = arabic_chars > 0 and (arabic_chars >= latin_chars * 0.35)
 
-    if persona == "gwen":
-        # Gwen is the Female AI: uses ElevenLabs if configured, otherwise Edge Neural female voices
+    has_eleven = False
+    if persona == "gwen" and not provider:
         from tools.tool_backend_helpers import resolve_provider_secret
-        has_eleven = bool(resolve_provider_secret("ELEVENLABS_API_KEY", "elevenlabs"))
+
+        has_eleven = await _run_config_scoped(
+            profile,
+            lambda: bool(resolve_provider_secret("ELEVENLABS_API_KEY", "elevenlabs")),
+        )
+
+    if persona == "gwen":
         if not provider:
             if has_eleven:
                 provider = "elevenlabs"
@@ -332,21 +373,24 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
                     voice_id = "ar-EG-SalmaNeural" if is_arabic_text else "en-US-AriaNeural"
         elif provider == "edge" and not voice_id:
             voice_id = "ar-EG-SalmaNeural" if is_arabic_text else "en-US-AriaNeural"
+        elif provider == "openrouter" and not voice_id:
+            is_fish = "fish" in (model_id or "").lower()
+            voice_id = "b347db033a6549378b48d00acb0d06cd" if is_fish else "flux-alexis-en"
     elif persona == "jarvis":
-        # Jarvis is 100% the MALE AI! — same opt-out for explicit selections.
-        provider = provider or "edge"
-        if not voice_id:
-            if is_arabic_text:
-                voice_id = "ar-EG-ShakirNeural"  # Authentic Egyptian Male voice
-            else:
-                voice_id = "en-US-GuyNeural"     # Distinctive English Male voice
-    else:
-        # If no persona specified, determine by language
-        if is_arabic_text:
-            provider = provider or "edge"
-            voice_id = voice_id or "ar-EG-ShakirNeural"
+        if provider == "openrouter" and not voice_id:
+            is_fish = "fish" in (model_id or "").lower()
+            voice_id = "802e3355590647bf9087eb4185361307" if is_fish else "flux-orion-en"
         else:
             provider = provider or "edge"
+            if not voice_id:
+                if is_arabic_text:
+                    voice_id = "ar-EG-ShakirNeural"
+                else:
+                    voice_id = "en-US-GuyNeural"
+    elif provider or persona:
+        if is_arabic_text:
+            voice_id = voice_id or "ar-EG-ShakirNeural"
+        else:
             voice_id = voice_id or "en-US-GuyNeural"
 
     # _config_profile_scope raises 400/404 for a bad profile — pass it
@@ -364,29 +408,25 @@ async def speak_text(payload: TTSSpeakRequest, profile: Optional[str] = None):
     except Exception:
         raise HTTPException(status_code=500, detail="Invalid TTS response")
 
+    file_paths = _result_audio_paths(result)
     if not result.get("success"):
+        if file_paths:
+            await asyncio.to_thread(_unlink_audio, file_paths)
         raise HTTPException(
             status_code=400, detail=result.get("error") or "Speech synthesis failed",
         )
 
-    file_path = result.get("file_path")
-    if not file_path or not os.path.isfile(file_path):
+    if not file_paths:
         raise HTTPException(status_code=500, detail="Audio file missing")
 
-    mime_type = _SPEAK_MIME_BY_EXT.get(os.path.splitext(file_path)[1].lower(), "audio/mpeg")
-
-    def _read_and_unlink() -> bytes:
-        # Off-loop: synthesized audio can be several MB; reading it inline
-        # blocks the uvicorn event loop. Unlink rides the same thread hop so
-        # the temp file cannot outlive an early return.
-        try:
-            with open(file_path, "rb") as fh:
-                return fh.read()
-        finally:
-            _unlink_quietly(file_path)
+    mime_type = _SPEAK_MIME_BY_EXT.get(
+        os.path.splitext(file_paths[0])[1].lower(), "audio/mpeg"
+    )
 
     try:
-        audio_bytes = await asyncio.to_thread(_read_and_unlink)
+        audio_bytes = await asyncio.to_thread(_read_and_unlink_audio, file_paths)
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Audio file missing")
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not read audio: {exc}")
 

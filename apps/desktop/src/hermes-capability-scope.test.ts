@@ -5,7 +5,9 @@ import { getAuxiliaryModels, getGlobalModelInfo } from './api/models'
 import { getOfficialSkills, getSkillHubSources } from './api/skills'
 import { getToolsetConfig } from './api/toolsets'
 import {
+  getElevenLabsVoices,
   getHermesConfigRecord,
+  getHermesConfigSchema,
   getMcpCatalog,
   getSkillContent,
   getSkills,
@@ -163,6 +165,21 @@ describe('capability helpers are connection-scoped', () => {
     // route — absorb a "This device" pick (v0.20.6 regression, #91564 rung).
     expect(last().profile).toBe('coder')
     expect(last().connectionId).toBe('local')
+  })
+
+  it('pins voice schema and catalog reads to the same connection/profile owner', () => {
+    const owner = { connectionId: 'voice-gateway', profile: 'reader' }
+
+    void getHermesConfigSchema(owner)
+    void getElevenLabsVoices(owner)
+
+    for (const call of api.mock.calls) {
+      expect(call[0]).toMatchObject({
+        connectionId: 'voice-gateway',
+        priority: 'foreground',
+        profile: 'reader'
+      })
+    }
   })
 
   it('profileScopeKey keeps legacy keys byte-identical and namespaces every explicit pin', () => {

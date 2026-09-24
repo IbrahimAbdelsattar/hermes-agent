@@ -22,7 +22,7 @@ def voice_home(tmp_path, monkeypatch):
     for var in (
         "GROQ_API_KEY", "OPENAI_API_KEY", "VOICE_TOOLS_OPENAI_KEY",
         "MISTRAL_API_KEY", "XAI_API_KEY", "ELEVENLABS_API_KEY",
-        "DEEPINFRA_API_KEY", "HERMES_LOCAL_STT_LANGUAGE",
+        "DEEPINFRA_API_KEY", "OPENROUTER_API_KEY", "HERMES_LOCAL_STT_LANGUAGE",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -147,11 +147,66 @@ def test_edge_tts_relays_openai_goes_direct(voice_home, monkeypatch):
     assert _resolve()["tts"]["extra_body"] == {"consent_attestation": "I own this voice"}
 
 
+def test_openai_tts_direct_carries_configured_speed_and_instructions(voice_home, monkeypatch):
+    voice_home({
+        "tts": {
+            "provider": "openai",
+            "speed": 1.5,
+            "output_format": "wav",
+            "openai": {"speed": 0.75, "instructions": "Speak brightly."},
+        },
+    })
+    monkeypatch.setenv("OPENAI_API_KEY", "sk_direct789")
+    tts = _resolve()["tts"]
+    assert tts["mode"] == "direct"
+    assert tts["speed"] == 0.75
+    assert tts["instructions"] == "Speak brightly."
+    assert tts["response_format"] == "wav"
+
+
+def test_deepinfra_tts_direct_matches_server_provider_settings(voice_home, monkeypatch):
+    voice_home({
+        "tts": {
+            "provider": "deepinfra",
+            "speed": 1.5,
+            "deepinfra": {
+                "model": "vendor/tts", "voice": "custom", "speed": 0.75,
+                "language": "es", "instructions": "Speak brightly.", "response_format": "wav",
+            },
+        },
+    })
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "di-key")
+    tts = _resolve()["tts"]
+    assert tts["mode"] == "direct"
+    assert tts["speed"] == 0.75
+    assert tts["voice"] == "custom"
+    assert tts["instructions"] == "Speak brightly."
+    assert tts["response_format"] == "wav"
+    assert tts["extra_body"] == {"lang_code": "es"}
+
+
+def test_openrouter_tts_direct_carries_speed(voice_home, monkeypatch):
+    voice_home({
+        "tts": {
+            "provider": "openrouter",
+            "speed": 1.5,
+            "openrouter": {
+                "model": "deepgram/flux-tts:free", "speed": 0.75, "response_format": "pcm",
+            },
+        },
+    })
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    tts = _resolve()["tts"]
+    assert tts["mode"] == "direct"
+    assert tts["speed"] == 0.75
+    assert tts["response_format"] == "pcm"
+
+
 def test_elevenlabs_tts_direct_carries_voice_and_model(voice_home, monkeypatch):
     voice_home({
         "tts": {
             "provider": "elevenlabs",
-            "elevenlabs": {"voice_id": "voice123", "model_id": "eleven_turbo_v2"},
+            "elevenlabs": {"voice_id": "voice123", "model_id": "eleven_turbo_v2", "speed": 0.8},
             "streaming": {"min_len": 6},
         },
     })
@@ -161,9 +216,41 @@ def test_elevenlabs_tts_direct_carries_voice_and_model(voice_home, monkeypatch):
     assert tts["wire"] == "elevenlabs-tts"
     assert tts["voice"] == "voice123"
     assert tts["model"] == "eleven_turbo_v2"
+    assert tts["speed"] == 0.8
     assert "elevenlabs.io" in tts["base_url"]
     # Desktop client-direct playback cuts sentences with tts.streaming.min_len too (#96927).
     assert tts["min_len"] == 6
+
+
+def test_direct_tts_carries_provider_speed_limit_and_openrouter_config_key(voice_home, monkeypatch):
+    voice_home({
+        "tts": {
+            "provider": "deepinfra",
+            "speed": 1.4,
+            "deepinfra": {"model": "deepinfra/tts-test", "max_text_length": 321},
+        },
+    })
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "di_key")
+    tts = _resolve()["tts"]
+    assert tts["provider"] == "deepinfra"
+    assert tts["speed"] == 1.4
+    assert tts["max_text_length"] == 321
+
+    voice_home({
+        "tts": {
+            "provider": "openrouter",
+            "openrouter": {"api_key": "or_config_key", "speed": 1.25, "max_text_length": 654},
+        },
+    })
+    tts = _resolve()["tts"]
+    assert tts["provider"] == "openrouter"
+    assert tts["api_key"] == "or_config_key"
+    assert tts["speed"] == 1.25
+    assert tts["max_text_length"] == 654
+
+    voice_home({"tts": {"provider": "openai", "speed": 9}})
+    monkeypatch.setenv("OPENAI_API_KEY", "sk_direct")
+    assert _resolve()["tts"]["speed"] == 4.0
 
 
 def test_command_provider_relays(voice_home, monkeypatch):

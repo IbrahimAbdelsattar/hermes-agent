@@ -85,6 +85,7 @@ interface ChatSidebarProps {
   className?: string
   onDashboardNewSessionRequest?: () => void
   onSessionTitleChange?: (title: string | null) => void
+  onModelChange?: (model: string, provider?: string) => void
 }
 
 /** Build the ``session.create`` params for the sidecar session.
@@ -107,7 +108,8 @@ export function ChatSidebar({
   profile,
   className,
   onDashboardNewSessionRequest,
-  onSessionTitleChange
+  onSessionTitleChange,
+  onModelChange
 }: ChatSidebarProps) {
   const navigate = useNavigate()
   // `version` bumps on reconnect (manual button, profile/channel switch) and
@@ -515,8 +517,12 @@ export function ChatSidebar({
             // and calls back; don't announce until the user confirms.
             if (!result.confirm_required) {
               refreshEffectiveModel()
-              // Ask before reloading: applying the model starts a fresh chat.
-              setPendingReloadModel(model.split('/').slice(-1)[0])
+              if (onModelChange) {
+                onModelChange(model, provider)
+              } else {
+                // Ask before reloading: applying the model starts a fresh chat.
+                setPendingReloadModel(model.split('/').slice(-1)[0])
+              }
             }
             return result
           }}

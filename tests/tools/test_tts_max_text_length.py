@@ -38,6 +38,30 @@ class TestResolveMaxTextLength:
         assert _resolve_max_text_length("", {}) == FALLBACK_MAX_TEXT_LENGTH
         assert _resolve_max_text_length(None, {}) == FALLBACK_MAX_TEXT_LENGTH
 
+    def test_provider_override_wins_over_global(self):
+        config = {
+            "max_text_length": 500,
+            "openai": {"max_text_length": 300},
+        }
+        assert _resolve_max_text_length("openai", config) == 300
+
+    def test_global_override_wins_over_provider_default(self):
+        assert _resolve_max_text_length("openai", {"max_text_length": 500}) == 500
+
+    def test_command_provider_override_wins_over_global(self):
+        config = {
+            "max_text_length": 500,
+            "providers": {"custom": {"command": "tts", "max_text_length": 700}},
+        }
+        assert _resolve_max_text_length("custom", config) == 700
+
+    def test_global_override_applies_to_command_provider(self):
+        config = {
+            "max_text_length": 500,
+            "providers": {"custom": {"command": "tts"}},
+        }
+        assert _resolve_max_text_length("custom", config) == 500
+
 
     # --- Overrides ---
 
@@ -47,10 +71,10 @@ class TestResolveMaxTextLength:
 
     # --- Sanity: the table covers every provider listed in the schema ---
 
-    def test_all_documented_providers_have_defaults(self):
-        expected = {"edge", "openai", "xai", "minimax", "mistral",
-                    "gemini", "elevenlabs", "neutts", "kittentts"}
-        assert expected.issubset(PROVIDER_MAX_TEXT_LENGTH.keys())
+    def test_every_runtime_builtin_has_a_default(self):
+        from tools.tts_tool import BUILTIN_TTS_PROVIDERS
+
+        assert BUILTIN_TTS_PROVIDERS <= PROVIDER_MAX_TEXT_LENGTH.keys()
 
 
 class TestTextToSpeechToolChunking:

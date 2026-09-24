@@ -107,3 +107,49 @@ class TestVisibleProvidersInjectsTTSPlugins:
         names = [row.get("name") for row in visible]
         assert "Cartesia" not in names
 
+
+class TestBuiltinTtsSurface:
+    def test_every_runtime_builtin_is_offered_by_setup_tools_and_web(self):
+        from hermes_cli.setup_tts import _TTS_PROVIDER_CHOICES
+        from hermes_cli.web_server_config import CONFIG_SCHEMA
+        from tools.tts_tool import BUILTIN_TTS_PROVIDERS
+
+        setup_names = {name for name, _label in _TTS_PROVIDER_CHOICES}
+        tools_names = {
+            row.get("tts_provider") for row in tools_config.TOOL_CATEGORIES["tts"]["providers"]
+            if row.get("tts_provider")
+        }
+        web_names = set(CONFIG_SCHEMA["tts.provider"]["options"])
+
+        assert BUILTIN_TTS_PROVIDERS <= setup_names
+        assert BUILTIN_TTS_PROVIDERS <= tools_names
+        assert BUILTIN_TTS_PROVIDERS <= web_names
+
+    def test_every_nonempty_tts_default_leaf_is_in_the_web_schema(self):
+        from hermes_cli.config_defaults import DEFAULT_CONFIG
+        from hermes_cli.web_server_config import CONFIG_SCHEMA
+
+        def leaves(value, prefix="tts"):
+            paths = set()
+            for key, child in value.items():
+                path = f"{prefix}.{key}"
+                if isinstance(child, dict) and child:
+                    paths.update(leaves(child, path))
+                elif not isinstance(child, dict):
+                    paths.add(path)
+            return paths
+
+        assert leaves(DEFAULT_CONFIG["tts"]) <= set(CONFIG_SCHEMA)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "tts.max_text_length", "tts.openai.max_text_length", "tts.openrouter.max_text_length",
+            "tts.elevenlabs.speed", "tts.openai.speed", "tts.xai.speed", "tts.deepinfra.speed",
+        ],
+    )
+    def test_nullable_numeric_tts_options_are_number_fields(self, key):
+        from hermes_cli.web_server_config import CONFIG_SCHEMA
+
+        assert CONFIG_SCHEMA[key]["type"] == "number"
+

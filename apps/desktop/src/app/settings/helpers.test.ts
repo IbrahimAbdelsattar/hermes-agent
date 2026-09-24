@@ -296,17 +296,15 @@ describe('settings helpers', () => {
     })
 
     // The runtime rejects a built-in name as a command provider before any config
-    // lookup, so such a block must never be offered — including the names the
-    // display list omits (`deepinfra` for TTS; `deepinfra`/`local_command` for
-    // STT), where filtering on ENUM_OPTIONS instead of the runtime's built-in set
-    // would wrongly offer a provider that can never dispatch.
-    it('never offers a built-in name as a command provider, even one absent from the dropdown list', () => {
+    // lookup, so such a block must never be offered, regardless of display-list drift.
+    it('never offers a built-in TTS name as a command provider', () => {
       const shadowing: HermesConfigRecord = {
         tts: {
           provider: 'edge',
           providers: {
-            // built-in and absent from ENUM_OPTIONS['tts.provider']
+            // built-ins are reserved even if a hand-edited config declares commands
             deepinfra: { type: 'command', command: 'curl …' },
+            openrouter: { type: 'command', command: 'curl …' },
             // built-in guard is case-insensitive at runtime (provider.lower())
             EDGE: { type: 'command', command: 'curl …' },
             // a genuine custom provider alongside them still surfaces
@@ -316,7 +314,8 @@ describe('settings helpers', () => {
       }
 
       const opts = enumOptionsFor('tts.provider', 'edge', shadowing)
-      expect(opts).not.toContain('deepinfra')
+      expect(opts!.filter(option => option === 'deepinfra')).toHaveLength(1)
+      expect(opts!.filter(option => option === 'openrouter')).toHaveLength(1)
       expect(opts).not.toContain('EDGE')
       expect(opts).toContain('higgs8')
       expect(opts!.filter(o => o === 'edge')).toHaveLength(1)
@@ -362,6 +361,14 @@ describe('settings helpers', () => {
       expect(fields.get('memory.memory_char_limit')?.type).toBe('number')
     })
 
+    it('uses curated types when a nullable backend default infers string', () => {
+      const schema = { 'tts.openai.max_text_length': { type: 'string' as const } }
+      const config: HermesConfigRecord = { tts: { openai: { max_text_length: null } } }
+      const fields = new Map(sectionFieldEntries(schema, config).get('voice') ?? [])
+
+      expect(fields.get('tts.openai.max_text_length')?.type).toBe('number')
+    })
+
     it('prefers the backend schema entry over inference when both exist', () => {
       const schema = { 'memory.provider': { type: 'select' as const, options: ['honcho'] } }
       const config: HermesConfigRecord = { memory: { provider: 'honcho' } }
@@ -372,7 +379,16 @@ describe('settings helpers', () => {
       expect(field?.options).toEqual(['honcho'])
     })
 
-    it('hides declared keys absent from both schema and config', () => {
+    it('renders curated optional TTS fields before they exist in user config', () => {
+      const fields = new Map(sectionFieldEntries({}, {}).get('voice') ?? [])
+
+      expect(fields.get('tts.speed')?.type).toBe('number')
+      expect(fields.get('tts.max_text_length')?.type).toBe('number')
+      expect(fields.get('tts.streaming.provider')?.type).toBe('select')
+      expect(fields.get('tts.openrouter.speed')?.type).toBe('number')
+    })
+
+    it('hides declared non-TTS keys absent from both schema and config', () => {
       expect(sectionFieldEntries({}, {}).get('memory') ?? []).toHaveLength(0)
     })
   })

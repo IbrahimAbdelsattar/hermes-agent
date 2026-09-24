@@ -18,6 +18,10 @@ export function fieldCopyForSchemaKey(copy: Record<string, string>, schemaKey: s
   return copy[schemaKeyToFieldCopyKey(schemaKey)] ?? copy[schemaKey]
 }
 
+export function mergeFieldCopy(defaults: Record<string, string>, copy: FieldCopyTree): Record<string, string> {
+  return { ...defaults, ...defineFieldCopy(copy) }
+}
+
 export function defineFieldCopy(copy: FieldCopyTree): Record<string, string> {
   const result: Record<string, string> = {}
 

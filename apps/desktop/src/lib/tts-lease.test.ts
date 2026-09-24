@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const setTtsLease = vi.fn(async (_lease: string, _active: boolean) => ({ ok: true }))
+const setTtsLease = vi.fn(async (_lease: string, _active: boolean, _owner?: unknown) => ({ ok: true }))
 
 vi.mock('@/hermes', () => ({
-  setTtsLease: (lease: string, active: boolean) => setTtsLease(lease, active)
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => null,
+  setTtsLease: (lease: string, active: boolean, owner?: unknown) =>
+    owner === undefined ? setTtsLease(lease, active) : setTtsLease(lease, active, owner)
 }))
 
 import { CONVERSATION_LEASE, READ_ALOUD_LEASE, resetTtsLeasesForTests, syncTtsLease } from './tts-lease'
@@ -90,6 +93,30 @@ describe('syncTtsLease', () => {
     await syncTtsLease(READ_ALOUD_LEASE, true)
 
     expect(setTtsLease).toHaveBeenCalledTimes(2)
+  })
+
+  it('dedupes and releases leases per connection/profile owner', async () => {
+    const alpha = { connectionId: 'gw-a', profile: 'default' }
+    const beta = { connectionId: 'gw-b', profile: 'default' }
+
+    await syncTtsLease(READ_ALOUD_LEASE, true, alpha)
+    await syncTtsLease(READ_ALOUD_LEASE, true, alpha)
+    await syncTtsLease(READ_ALOUD_LEASE, true, beta)
+
+    expect(setTtsLease.mock.calls).toEqual([
+      [READ_ALOUD_LEASE, true, alpha],
+      [READ_ALOUD_LEASE, true, beta]
+    ])
+
+    await syncTtsLease(READ_ALOUD_LEASE, false, alpha)
+    await syncTtsLease(READ_ALOUD_LEASE, true, alpha)
+
+    expect(setTtsLease.mock.calls).toEqual([
+      [READ_ALOUD_LEASE, true, alpha],
+      [READ_ALOUD_LEASE, true, beta],
+      [READ_ALOUD_LEASE, false, alpha],
+      [READ_ALOUD_LEASE, true, alpha]
+    ])
   })
 
   it('conversation lease is per renderer, read-aloud lease is shared', () => {

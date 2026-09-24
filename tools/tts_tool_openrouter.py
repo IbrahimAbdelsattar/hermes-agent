@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from tools.tts_tool_delivery import _origin, _section, _wrap_pcm_as_wav, _write_wav_bytes_as
+from tools.tts_tool_delivery import _origin, _provider_speed, _section, _wrap_pcm_as_wav, _write_wav_bytes_as
 from tools.tts_tool_providers import _post_json, _read_tts_response_bytes
 
 logger = logging.getLogger("tools.tts_tool")
@@ -112,10 +112,7 @@ def _generate_openrouter_tts(text: str, output_path: str, tts_config: Dict[str, 
     payload: Dict[str, Any] = {
         "model": model, "input": text, "voice": voice, "response_format": response_format,
     }
-    try:
-        speed = float(section.get("speed", tts_config.get("speed", 1.0)))
-    except (TypeError, ValueError):
-        speed = 1.0
+    speed = _provider_speed(tts_config, "openrouter")
     if speed != 1.0:
         # Documented as honored only by models that support it, ignored otherwise.
         payload["speed"] = max(0.25, min(4.0, speed))

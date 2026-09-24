@@ -1,4 +1,8 @@
-import { defineFieldCopy } from '@/app/settings/field-copy'
+import {
+  FIELD_DESCRIPTIONS as DEFAULT_FIELD_DESCRIPTIONS,
+  FIELD_LABELS as DEFAULT_FIELD_LABELS
+} from '@/app/settings/constants'
+import { mergeFieldCopy } from '@/app/settings/field-copy'
 
 import { defineLocale } from './define-locale'
 
@@ -685,7 +689,7 @@ export const ja = defineLocale({
         turnOffFailed: 'ペットをオフにできませんでした。'
       }
     },
-    fieldLabels: defineFieldCopy({
+    fieldLabels: mergeFieldCopy(DEFAULT_FIELD_LABELS, {
       model: 'デフォルトモデル',
       modelContextLength: 'メインのチャットモデルのみ、検出されたコンテキストウィンドウを上書きします（トークン数）。0 のままにすると、選択したモデルから検出された値を使用します。補助モデル/MoA モデルには影響しません。',
       fallbackProviders: 'フォールバックモデル',
@@ -748,7 +752,17 @@ export const ja = defineLocale({
       voice: {
         recordKey: '音声ショートカット',
         maxRecordingSeconds: '最大録音時間',
-        autoTts: '応答を読み上げる'
+        autoTts: 'バックエンド自動 TTS',
+        clientDirect: 'プロバイダー直接呼び出し',
+        beepEnabled: '録音ビープ',
+        beepVolume: '録音ビープ音量',
+        thinkingSound: '思考中サウンド',
+        silenceThreshold: '録音の無音しきい値',
+        silenceDuration: '録音の無音時間',
+        bargeIn: '割り込み',
+        bargeInGraceSeconds: '割り込み待機時間',
+        bargeInThresholdMultiplier: '割り込みしきい値倍率',
+        stopPhrases: '音声停止フレーズ'
       },
       stt: {
         enabled: '音声認識',
@@ -775,6 +789,13 @@ export const ja = defineLocale({
       },
       tts: {
         provider: '音声合成プロバイダー',
+        speed: '既定の再生速度',
+        outputFormat: '既定の出力形式',
+        maxTextLength: '既定の文字上限',
+        streaming: {
+          minLen: 'ストリーミング文の最小文字数',
+          provider: 'ストリーミングプロバイダー'
+        },
         edge: {
           voice: 'Edge 音声'
         },
@@ -817,6 +838,13 @@ export const ja = defineLocale({
         },
         piper: {
           voice: 'Piper 音声'
+        },
+        openrouter: {
+          model: 'OpenRouter TTS モデル',
+          voice: 'OpenRouter 音声',
+          speed: 'OpenRouter 再生速度',
+          baseUrl: 'OpenRouter ベース URL',
+          maxTextLength: 'OpenRouter 文字上限'
         }
       },
       memory: {
@@ -853,7 +881,7 @@ export const ja = defineLocale({
         nonInteractiveLocalChanges: 'アプリ内更新時のローカル変更'
       }
     }),
-    fieldDescriptions: defineFieldCopy({
+    fieldDescriptions: mergeFieldCopy(DEFAULT_FIELD_DESCRIPTIONS, {
       model: 'コンポーザーで別のモデルを選ばない限り、新しいチャットで使用されます。',
       modelContextLength: '0 のままにすると、選択したモデルから検出されたコンテキストウィンドウを使用します。',
       fallbackProviders: 'デフォルトモデルが失敗したときに試す provider:model 形式のバックアップです。',
@@ -908,7 +936,38 @@ export const ja = defineLocale({
         }
       },
       voice: {
-        autoTts: 'アシスタントの応答を自動で読み上げます。'
+        autoTts:
+          'CLI とメッセージングゲートウェイで音声応答を自動化するバックエンド既定値です。デスクトップの「応答を読み上げる」は独立したローカル設定です。',
+        clientDirect:
+          'リモート接続時、音声をゲートウェイ経由で中継せず、選択中プロファイルの音声プロバイダーをデスクトップから直接呼び出します。'
+      },
+      tts: {
+        speed: 'プロバイダーに個別設定がない場合の再生速度。1.0 が標準です。',
+        outputFormat: '合成音声の既定コンテナ形式です。プロバイダーが対応する形式が優先されます。',
+        maxTextLength: '1 回の TTS リクエストの既定文字数上限です。長い内容は省略せず分割されます。',
+        streaming: {
+          minLen: 'ストリーミング音声が単独で再生できる最短の文の文字数です。',
+          provider: 'ストリーミングプロバイダーを固定するか、自動選択、または選択中の TTS プロバイダーに合わせます。'
+        },
+        openrouter: {
+          model: 'OpenRouter の TTS モデル ID です。新しいモデルも自由に入力できます。',
+          voice: '選択した OpenRouter TTS モデルが受け付ける音声 ID です。',
+          speed: '対応モデルでの再生速度です。1.0 が標準です。',
+          baseUrl: '任意の OpenRouter TTS エンドポイントです。',
+          maxTextLength: 'OpenRouter の 1 リクエストあたりの文字数上限です。長い内容は分割されます。'
+        },
+        xai: {
+          voiceId: 'xAI 音声 ID（例: eve）またはカスタム音声 ID です。',
+          language: '発話言語コード（例: en、pt-BR）または "auto" です。',
+          speed: '再生速度。0.7 = 遅く、1.0 = 標準、1.5 = 速くなります。',
+          autoSpeechTags: '合成前に LLM が表现力タグを挿入します。',
+          optimizeStreamingLatency: 'レイテンシと品質のバランス。0 = 最高品質、2 = 最低レイテンシ。',
+          sampleRate: 'オーディオサンプルレート',
+          bitRate: 'MP3 ビットレート。'
+        },
+        neutts: {
+          device: 'NeuTTS のローカル推論デバイスです。'
+        }
       },
       stt: {
         enabled: 'ローカルまたはプロバイダーによる音声文字起こしを有効にします。',

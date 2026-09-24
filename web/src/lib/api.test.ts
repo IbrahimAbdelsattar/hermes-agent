@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, fetchJSON, setManagementProfile } from "./api";
+import { api, authedFetch, fetchJSON, setManagementProfile } from "./api";
 
 const reloadMocks = vi.hoisted(() => ({
   attemptDashboardTokenReloadOnce: vi.fn(() => false),
@@ -86,6 +86,52 @@ describe("fetchJSON", () => {
     await expect(fetchJSON("/api/status")).resolves.toEqual({ ok: true });
 
     expect(reloadMocks.clearDashboardTokenReloadAttempt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("management profile routing", () => {
+  it("scopes every audio REST call to the selected profile", async () => {
+    const fetchMock = jsonFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    setManagementProfile("worker");
+
+    const paths = [
+      "/api/audio/transcribe",
+      "/api/audio/speak",
+      "/api/audio/voice-config",
+      "/api/audio/voice-live/status",
+      "/api/audio/voice-live/session",
+      "/api/audio/elevenlabs/voices",
+      "/api/audio/tts-lease",
+    ];
+    for (const path of paths) await authedFetch(path, { method: "POST" });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(
+      paths.map((path) => `${path}?profile=worker`),
+    );
+  });
+
+  it("scopes the audio speak stream WebSocket to the selected profile", async () => {
+    setManagementProfile("worker");
+
+    const url = new URL(await api.buildWsUrl("/api/audio/speak-stream"));
+
+    expect(url.pathname).toBe("/api/audio/speak-stream");
+    expect(url.searchParams.get("profile")).toBe("worker");
+    expect(url.searchParams.get("token")).toBe("stale-token");
+  });
+
+  it("scopes the config schema to the selected profile", async () => {
+    const fetchMock = jsonFetchMock({ fields: {}, category_order: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    setManagementProfile("worker");
+
+    await api.getSchema();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/config/schema?profile=worker",
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 });
 

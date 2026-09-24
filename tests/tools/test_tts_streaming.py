@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextvars import ContextVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1257,3 +1258,65 @@ def test_sync_pipeline_falls_back_to_requested_path_when_reported_missing(monkey
     assert len(played) == 1 and played[0][1] > 0, (
         "requested-path fallback no longer plays"
     )
+
+
+def test_sync_executor_preserves_context_across_a_b_a(monkeypatch):
+    from tools import tts_tool
+    from tools.tts_tool_speaker import _SyncSentencePipeline
+
+    profile = ContextVar("tts_profile", default="launch")
+    seen = []
+
+    def fake_synth(text, output_path):
+        seen.append(profile.get())
+        with open(output_path, "wb") as handle:
+            handle.write(b"audio")
+        return output_path
+
+    monkeypatch.setattr(tts_tool, "text_to_speech_tool", fake_synth)
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.voice_mode",
+        MagicMock(play_audio_file=lambda _path: None),
+    )
+    for value in ("a", "b", "a"):
+        token = profile.set(value)
+        try:
+            pipeline = _SyncSentencePipeline(threading.Event())
+            pipeline.speak("A complete sentence.")
+            pipeline.close()
+        finally:
+            profile.reset(token)
+
+    assert seen == ["a", "b", "a"]
+
+
+def test_streamer_prefetch_preserves_context(monkeypatch):
+    from tools import tts_tool_speaker as speaker
+
+    profile = ContextVar("tts_stream_profile", default="launch")
+    seen = []
+
+    class _Provider:
+        sample_rate = 24000
+        channels = 1
+
+        def stream(self, text):
+            seen.append(profile.get())
+            yield b"\x00\x00" * 10
+
+    monkeypatch.setattr(speaker._StreamerPlayback, "_device_usable", lambda self: False)
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.voice_mode",
+        MagicMock(play_audio_file=lambda _path: None),
+    )
+    token = profile.set("b")
+    try:
+        playback = speaker._StreamerPlayback(_Provider(), threading.Event())
+        playback.speak("A complete sentence.")
+        playback.finish()
+    finally:
+        profile.reset(token)
+
+    assert seen == ["b"]

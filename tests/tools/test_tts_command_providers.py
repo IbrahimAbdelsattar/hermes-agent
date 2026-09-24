@@ -27,6 +27,7 @@ from tools.tts_command_provider import (
     DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH,
     DEFAULT_COMMAND_TTS_OUTPUT_FORMAT,
     DEFAULT_COMMAND_TTS_TIMEOUT_SECONDS,
+    _configured_command_tts_output_path,
     _get_command_tts_timeout,
     _get_named_provider_config,
     _is_command_provider_config,
@@ -197,6 +198,15 @@ class TestConfigGetters:
 
     def test_output_format_defaults(self):
         assert _get_command_tts_output_format({}) == DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
+
+    def test_explicit_recognized_suffix_wins_over_configured_format(self):
+        path = _configured_command_tts_output_path(Path("clip.wav"), {"output_format": "mp3"})
+        assert path == Path("clip.wav")
+
+    def test_missing_or_unknown_suffix_uses_configured_format(self):
+        config = {"output_format": "flac"}
+        assert _configured_command_tts_output_path(Path("clip"), config) == Path("clip.flac")
+        assert _configured_command_tts_output_path(Path("clip.bin"), config) == Path("clip.flac")
 
 
     def test_voice_compatible_boolean(self):
@@ -395,6 +405,18 @@ class TestGenerateCommandTts:
         # contains the original UTF-8 text.
         assert out.read_text(encoding="utf-8") == "hello world"
 
+    def test_speed_precedence_reaches_placeholder(self, tmp_path):
+        out = tmp_path / "clip.mp3"
+        command = (
+            f'"{sys.executable}" -c "import pathlib, sys; '
+            f'pathlib.Path(sys.argv[1]).write_text(sys.argv[2])" '
+            f'{{output_path}} {{speed}}'
+        )
+        _generate_command_tts(
+            "hello", str(out), "speed", {"command": command, "speed": 0.75}, {"speed": 1.5},
+        )
+        assert out.read_text(encoding="utf-8") == "0.75"
+
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX-only timeout semantics")
     def test_timeout_raises_runtime(self, tmp_path):
@@ -443,6 +465,44 @@ class TestTextToSpeechToolWithCommandProvider:
         assert data["provider"] == "py-copy"
         assert data["voice_compatible"] is False
         assert Path(data["file_path"]).exists()
+
+    def test_call_speed_preserves_legacy_command_config(self, tmp_path):
+        command = (
+            f'"{sys.executable}" -c "import pathlib, sys; '
+            f'pathlib.Path(sys.argv[1]).write_text(sys.argv[2])" '
+            f'{{output_path}} {{speed}}'
+        )
+        cfg = {
+            "provider": "legacy",
+            "speed": 1.5,
+            "legacy": {"command": command, "speed": 0.8},
+        }
+        out = tmp_path / "clip.mp3"
+        with patch("tools.tts_tool._load_tts_config", return_value=cfg):
+            result = json.loads(text_to_speech_tool(text="hi", output_path=str(out), speed=0.7))
+
+        assert result["success"] is True, result
+        assert out.read_text(encoding="utf-8") == "0.7"
+
+    def test_explicit_output_suffix_wins_end_to_end(self, tmp_path):
+        cfg = {
+            "provider": "py-copy",
+            "providers": {
+                "py-copy": {
+                    "type": "command",
+                    "command": _python_copy_command(),
+                    "output_format": "mp3",
+                },
+            },
+        }
+        out = tmp_path / "clip.wav"
+        with patch("tools.tts_tool._load_tts_config", return_value=cfg):
+            result = text_to_speech_tool(text="hi", output_path=str(out))
+
+        data = json.loads(result)
+        assert data["success"] is True, data
+        assert Path(data["file_path"]) == out
+        assert out.exists()
 
     def test_voice_compatible_opt_in_toggles_flag(self, tmp_path):
         """voice_compatible=true is reflected in the response when the

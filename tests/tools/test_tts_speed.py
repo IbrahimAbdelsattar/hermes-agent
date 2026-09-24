@@ -46,6 +46,41 @@ class TestEdgeTtsSpeed:
         kwargs = comm_cls.call_args[1]
         assert "rate" not in kwargs
 
+    def test_provider_speed_overrides_global(self, tmp_path):
+        comm_cls = self._run({"speed": 1.5, "edge": {"speed": 0.8}}, tmp_path)
+        assert comm_cls.call_args[1]["rate"] == "-20%"
+
+    def test_global_speed_applies_without_provider_override(self, tmp_path):
+        comm_cls = self._run({"speed": 1.25, "edge": {"speed": None}}, tmp_path)
+        assert comm_cls.call_args[1]["rate"] == "+25%"
+
+
+class TestElevenLabsTtsSpeed:
+    def _run(self, tts_config, tmp_path):
+        convert = MagicMock(return_value=iter([b"audio"]))
+        client = MagicMock()
+        client.text_to_speech.convert = convert
+        factory = MagicMock(return_value=client)
+        with patch("tools.tts_tool._resolve_provider_key", return_value="key"), \
+             patch("tools.tts_tool._import_elevenlabs", return_value=factory):
+            from tools.tts_tool import _generate_elevenlabs
+            _generate_elevenlabs("Hello", str(tmp_path / "out.mp3"), tts_config)
+        return convert
+
+    def test_provider_speed_overrides_global(self, tmp_path):
+        convert = self._run({"speed": 1.5, "elevenlabs": {"speed": 0.8}}, tmp_path)
+        assert convert.call_args.kwargs["speed"] == 0.8
+
+    def test_global_speed_applies_without_provider_override(self, tmp_path):
+        convert = self._run({"speed": 1.1, "elevenlabs": {"speed": None}}, tmp_path)
+        assert convert.call_args.kwargs["speed"] == 1.1
+
+    def test_v3_omits_unsupported_speed(self, tmp_path):
+        convert = self._run(
+            {"speed": 1.1, "elevenlabs": {"speed": 0.8, "model_id": "eleven_v3"}}, tmp_path,
+        )
+        assert "speed" not in convert.call_args.kwargs
+
 
 # ---------------------------------------------------------------------------
 # OpenAI TTS speed
@@ -79,10 +114,43 @@ class TestOpenaiTtsSpeed:
         kwargs = create.call_args[1]
         assert kwargs["speed"] == 4.0
 
+    def test_provider_speed_overrides_global(self, tmp_path, monkeypatch):
+        create = self._run({"speed": 1.5, "openai": {"speed": 0.75}}, tmp_path, monkeypatch)
+        assert create.call_args[1]["speed"] == 0.75
 
-# ---------------------------------------------------------------------------
-# OpenAI TTS language (lang_code for OpenAI-compatible endpoints)
-# ---------------------------------------------------------------------------
+    def test_global_speed_applies_without_provider_override(self, tmp_path, monkeypatch):
+        create = self._run({"speed": 1.25, "openai": {"speed": None}}, tmp_path, monkeypatch)
+        assert create.call_args[1]["speed"] == 1.25
+
+
+class TestXaiTtsSpeed:
+    def _run(self, tts_config, tmp_path):
+        class Response:
+            def iter_content(self, chunk_size=None):
+                yield b"audio"
+
+            def raise_for_status(self):
+                pass
+
+            def close(self):
+                pass
+
+        with patch(
+            "tools.xai_http.resolve_xai_http_credentials",
+            return_value={"api_key": "key", "provider": "xai", "base_url": "https://api.x.ai/v1"},
+        ), patch("requests.post", return_value=Response()) as post:
+            from tools.tts_tool import _generate_xai_tts
+            _generate_xai_tts("Hello", str(tmp_path / "out.mp3"), tts_config)
+        return post.call_args[1]["json"]
+
+    def test_provider_speed_overrides_global(self, tmp_path):
+        payload = self._run({"speed": 1.4, "xai": {"speed": 0.8}}, tmp_path)
+        assert payload["speed"] == 0.8
+
+    def test_global_speed_applies_without_provider_override(self, tmp_path):
+        payload = self._run({"speed": 1.4, "xai": {"speed": None}}, tmp_path)
+        assert payload["speed"] == 1.4
+
 
 class TestOpenaiTtsLangCode:
     def _run(self, tts_config, tmp_path, monkeypatch):
@@ -166,6 +234,13 @@ class TestMinimaxTtsT2aV2:
         # Don't send flat top-level voice_id alongside nested voice_setting.
         assert "voice_id" not in payload
 
+    def test_speed_precedence(self, tmp_path, monkeypatch):
+        mock_post, _ = self._run({"speed": 1.5, "minimax": {"speed": 0.75}}, tmp_path, monkeypatch)
+        assert mock_post.call_args[1]["json"]["voice_setting"]["speed"] == 0.75
+
+        mock_post, _ = self._run({"speed": 1.25, "minimax": {"speed": None}}, tmp_path, monkeypatch)
+        assert mock_post.call_args[1]["json"]["voice_setting"]["speed"] == 1.25
+
     def test_decodes_hex_audio(self, tmp_path, monkeypatch):
         """t2a_v2 hex-encoded audio is decoded and written verbatim."""
         _, output = self._run({}, tmp_path, monkeypatch)
@@ -225,6 +300,28 @@ class TestMinimaxTtsLegacyTextToSpeech:
 
 class TestToolLevelSpeed:
     """Verify that the speed parameter on text_to_speech_tool injects into config."""
+
+    @pytest.mark.parametrize(
+        "provider",
+        ["edge", "elevenlabs", "openai", "deepinfra", "xai", "minimax", "openrouter", "kittentts", "custom-tts"],
+    )
+    def test_call_speed_overrides_provider_for_every_speed_capable_dispatch(self, provider):
+        from tools.tts_tool import BUILTIN_TTS_PROVIDERS, _apply_call_overrides
+
+        config = {"provider": provider, "speed": 1.5}
+        if provider in BUILTIN_TTS_PROVIDERS:
+            config[provider] = {"speed": 0.5}
+        else:
+            config["providers"] = {provider: {"speed": 0.5}}
+
+        updated, resolved = _apply_call_overrides(config, 1.25, provider)
+        section = (
+            updated[resolved] if resolved in BUILTIN_TTS_PROVIDERS
+            else updated["providers"][resolved]
+        )
+        assert resolved == provider
+        assert updated["speed"] == 1.25
+        assert section["speed"] == 1.25
 
     def test_speed_injected_into_config(self, tmp_path, monkeypatch):
         """When speed is passed to the tool, it overrides config speed."""

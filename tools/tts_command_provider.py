@@ -288,12 +288,18 @@ def _iter_command_providers(tts_config: Dict[str, Any]):
             yield name, cfg
 
 
-def _get_command_tts_output_format(config: Dict[str, Any], output_path: Optional[str] = None) -> str:
-    """Validated output format: the output path's suffix wins, then ``format``/``output_format``."""
+def _get_command_tts_output_format(
+    config: Dict[str, Any], output_path: Optional[str] = None,
+    default: str = DEFAULT_COMMAND_TTS_OUTPUT_FORMAT,
+) -> str:
+    """Validated output format: the output path's suffix wins, then configured/default format."""
     suffix = Path(output_path).suffix.lower().strip().lstrip(".") if output_path else ""
     if suffix in COMMAND_TTS_OUTPUT_FORMATS:
         return suffix
-    return _command_output_format(config, COMMAND_TTS_OUTPUT_FORMATS, DEFAULT_COMMAND_TTS_OUTPUT_FORMAT)
+    normalized_default = str(default or "").lower().strip().lstrip(".")
+    if normalized_default not in COMMAND_TTS_OUTPUT_FORMATS:
+        normalized_default = DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
+    return _command_output_format(config, COMMAND_TTS_OUTPUT_FORMATS, normalized_default)
 
 
 def _is_command_tts_voice_compatible(config: Dict[str, Any]) -> bool:
@@ -301,9 +307,14 @@ def _is_command_tts_voice_compatible(config: Dict[str, Any]) -> bool:
     return is_truthy_value(config.get("voice_compatible", False))
 
 
-def _configured_command_tts_output_path(path: Path, config: Dict[str, Any]) -> Path:
-    """Return an output path whose extension matches the provider's output_format."""
-    return path.with_suffix(f".{_get_command_tts_output_format(config)}")
+def _configured_command_tts_output_path(
+    path: Path, config: Dict[str, Any], default: str = DEFAULT_COMMAND_TTS_OUTPUT_FORMAT,
+) -> Path:
+    """Preserve a recognized explicit suffix; otherwise apply the configured output format."""
+    suffix = path.suffix.lower().strip().lstrip(".")
+    if suffix in COMMAND_TTS_OUTPUT_FORMATS:
+        return path
+    return path.with_suffix(f".{_get_command_tts_output_format(config, default=default)}")
 
 
 def _generate_command_tts(
@@ -322,9 +333,10 @@ def _generate_command_tts(
     with tempfile.TemporaryDirectory() as tmpdir:
         text_path = Path(tmpdir) / "input.txt"
         text_path.write_text(text, encoding="utf-8")
+        default_output_format = tts_config.get("output_format") or DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
         placeholders = {
             "input_path": str(text_path), "text_path": str(text_path), "output_path": str(output),
-            "format": _get_command_tts_output_format(config, str(output)),
+            "format": _get_command_tts_output_format(config, str(output), default_output_format),
             "voice": str(config.get("voice", "")), "model": str(config.get("model", "")),
             "speed": str(config.get("speed", tts_config.get("speed", ""))),
         }

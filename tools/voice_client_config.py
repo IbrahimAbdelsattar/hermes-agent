@@ -68,6 +68,28 @@ def _deepinfra_model(section: Dict[str, Any], kind: str) -> Optional[str]:
     return section.get("model") or next(iter(deepinfra_model_ids(kind)), None)
 
 
+def _tts_response_format(configured: Any, provider: str) -> str:
+    normalized = str(configured or "").lower().strip().lstrip(".")
+    if normalized == "pcm":
+        normalized = "wav"
+    if provider == "openrouter":
+        if normalized == "wav":
+            return "pcm"
+        return "mp3" if normalized in {"mp3", "ogg", "opus"} else ""
+    if normalized == "ogg":
+        normalized = "opus"
+    return normalized if normalized in {"mp3", "opus", "aac", "flac", "wav"} else ""
+
+
+def _resolved_provider_speed(config: Dict[str, Any], provider: str) -> float:
+    from tools.tts_tool_delivery import _provider_speed
+    return _provider_speed(config, provider)
+
+
+def _openai_speed(config: Dict[str, Any], provider: str) -> float:
+    return max(0.25, min(4.0, _resolved_provider_speed(config, provider)))
+
+
 # ── STT ──
 # provider -> (env var, default-model attr on transcription_common, base_url).
 # ``base_url`` is a transcription_common attr name or a literal URL.
@@ -176,24 +198,33 @@ def _resolve_tts_client_config() -> Dict[str, Any]:
         # coercion text_to_speech applies server-side.
         if is_managed and not config_base and model not in tts_tool_openai.MANAGED_OPENAI_TTS_MODELS:
             model = tts_tool_openai.DEFAULT_OPENAI_MODEL
-        speed_default = tts_config.get("speed", 1.0) if isinstance(tts_config, dict) else 1.0
-        try:
-            speed = float(oai.get("speed", speed_default))
-        except (TypeError, ValueError):
-            speed = 1.0
+        speed = _openai_speed(tts_config, "openai")
         return _direct(TTS_WIRE_OPENAI, "openai", base_url, api_key, model,
                        voice=oai.get("voice") or tts_tool_openai.DEFAULT_OPENAI_VOICE, speed=speed,
+                       instructions=oai.get("instructions") or "",
+                       response_format=_tts_response_format(
+                           oai.get("response_format") or tts_config.get("output_format"), "openai"),
                        extra_body=tts_tool_openai._openai_extra_body(oai),
+                       max_text_length=tts._resolve_max_text_length(provider, tts_config),
                        min_len=min_len)
     if provider == "elevenlabs":
         api_key = tts._resolve_provider_key("ELEVENLABS_API_KEY", "elevenlabs")
         if not api_key:
             return _relay("no credentials")
         el = _section(tts_config, "elevenlabs")
+        model = el.get("model_id") or tts_tool_providers.DEFAULT_ELEVENLABS_MODEL_ID
+        speed = None
+        if "v3" not in str(model).lower():
+            speed = max(
+                tts_tool_providers.DEFAULT_ELEVENLABS_SPEED_MIN,
+                min(tts_tool_providers.DEFAULT_ELEVENLABS_SPEED_MAX,
+                    _resolved_provider_speed(tts_config, "elevenlabs")),
+            )
         return _direct(TTS_WIRE_ELEVENLABS, "elevenlabs",
                        str(el.get("base_url") or "https://api.elevenlabs.io/v1").rstrip("/"),
-                       api_key, el.get("model_id") or tts_tool_providers.DEFAULT_ELEVENLABS_MODEL_ID,
-                       voice=el.get("voice_id") or tts_tool_providers.DEFAULT_ELEVENLABS_VOICE_ID, speed=None,
+                       api_key, model,
+                       voice=el.get("voice_id") or tts_tool_providers.DEFAULT_ELEVENLABS_VOICE_ID,
+                       speed=speed, max_text_length=tts._resolve_max_text_length(provider, tts_config),
                        min_len=min_len)
     if provider == "deepinfra":
         api_key = tts._resolve_provider_key("DEEPINFRA_API_KEY", "deepinfra")
@@ -205,18 +236,30 @@ def _resolve_tts_client_config() -> Dict[str, Any]:
         if not model:
             return _relay("no deepinfra tts model")
         return _direct(TTS_WIRE_OPENAI, "deepinfra", deepinfra_base_url(di), api_key, model,
-                       voice=di.get("voice") or "af_bella", speed=None, min_len=min_len)
+                       voice=di.get("voice") or tts_tool_openai.DEFAULT_DEEPINFRA_TTS_VOICE,
+                       speed=_openai_speed(tts_config, "deepinfra"),
+                       instructions=di.get("instructions") or "",
+                       response_format=_tts_response_format(
+                           di.get("response_format") or tts_config.get("output_format"), "deepinfra"),
+                       extra_body=tts_tool_openai._openai_extra_body(di),
+                       max_text_length=tts._resolve_max_text_length(provider, tts_config),
+                       min_len=min_len)
     if provider == "openrouter":
         from tools import tts_tool_openrouter as tts_or
-        api_key = tts._resolve_provider_key("OPENROUTER_API_KEY", "openrouter")
+        section = _section(tts_config, "openrouter")
+        api_key = str(section.get("api_key") or "").strip() or tts._resolve_provider_key(
+            "OPENROUTER_API_KEY", "openrouter")
         if not api_key:
             return _relay("no credentials")
-        section = _section(tts_config, "openrouter")
         model = str(section.get("model") or tts_or.DEFAULT_OPENROUTER_MODEL).strip()
         voice = tts_or._resolve_openrouter_voice(model, section.get("voice"))
         base_url = str(section.get("base_url") or tts_or.DEFAULT_OPENROUTER_BASE_URL).strip().rstrip("/")
         return _direct(TTS_WIRE_OPENAI, "openrouter", base_url, api_key, model,
-                       voice=voice, speed=None, min_len=min_len)
+                       voice=voice, speed=_openai_speed(tts_config, "openrouter"),
+                       response_format=_tts_response_format(
+                           section.get("response_format") or tts_config.get("output_format"), "openrouter"),
+                       max_text_length=tts._resolve_max_text_length(provider, tts_config),
+                       min_len=min_len)
     # edge / minimax / xai / mistral / gemini / neutts / kittentts / piper: server-host-only
     # engines or wire shapes the desktop doesn't speak yet; the relay path serves them.
     return _relay(f"provider {provider!r} has no client wire")

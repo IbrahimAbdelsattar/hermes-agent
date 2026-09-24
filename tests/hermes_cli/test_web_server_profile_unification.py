@@ -884,6 +884,46 @@ class TestProfileScopedAudio:
         assert resp.json()["transcript"] == "hi"
         assert seen["home"] == str(isolated_profiles["worker_beta"])
 
+    def test_elevenlabs_catalog_does_not_borrow_launch_key_for_named_profile(
+        self, client, isolated_profiles, monkeypatch
+    ):
+        import hermes_cli.web_routers.audio as audio_router
+
+        (isolated_profiles["default"] / ".env").write_text(
+            "ELEVENLABS_API_KEY=launch-only\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "launch-only")
+        requested_keys = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"voices": []}'
+
+        def fake_urlopen(request, timeout):
+            requested_keys.append(
+                next(value for name, value in request.header_items() if name.lower() == "xi-api-key")
+            )
+            return FakeResponse()
+
+        monkeypatch.setattr(audio_router.urllib.request, "urlopen", fake_urlopen)
+
+        secondary = client.get(
+            "/api/audio/elevenlabs/voices", params={"profile": "worker_beta"}
+        )
+        launch = client.get("/api/audio/elevenlabs/voices")
+
+        assert secondary.status_code == 200
+        assert secondary.json() == {"available": False, "voices": []}
+        assert launch.status_code == 200
+        assert launch.json()["available"] is True
+        assert requested_keys == ["launch-only"]
+
     def test_audio_endpoints_unknown_profile_404(self, client, isolated_profiles):
         resp = client.get("/api/audio/elevenlabs/voices?profile=ghost")
         assert resp.status_code == 404

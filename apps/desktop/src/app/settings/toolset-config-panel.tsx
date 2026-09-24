@@ -36,7 +36,7 @@ import type {
 import { EnvVarActionsMenu, EnvVarActionsTrigger, EnvVarContextMenu } from './env-var-actions-menu'
 import { prettyName } from './helpers'
 import { Pill } from './primitives'
-import { VoiceProviderFields } from './voice-provider-fields'
+import { voiceFieldsScopeKey, VoiceProviderFields } from './voice-provider-fields'
 
 interface ToolsetConfigPanelProps {
   toolset: string
@@ -915,7 +915,12 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
                   // threaded like every other fetch in this panel: unscoped,
                   // these fields read AND autosaved the ACTIVE profile's
                   // config while the panel claimed to configure another.
-                  <VoiceProviderFields profile={profile} providerKey={provider.tts_provider} section="tts" />
+                  <VoiceProviderFields
+                    key={voiceFieldsScopeKey(profile)}
+                    profile={profile}
+                    providerKey={provider.tts_provider}
+                    section="tts"
+                  />
                 )}
                 {MODEL_CATALOG_TOOLSETS.has(toolset) && (
                   <ModelCatalogPicker

@@ -7,6 +7,10 @@ import {
   getVoicePauseTimeoutMs,
   nextAutoRecognitionLang,
   normalizeVoicePrompt,
+  OPENROUTER_FEMALE_FISH_VOICE,
+  OPENROUTER_FEMALE_FLUX_VOICE,
+  OPENROUTER_MALE_FISH_VOICE,
+  OPENROUTER_MALE_FLUX_VOICE,
   OPENROUTER_TTS_SPECS,
   recognitionTranscript,
   resolveServerTranscript,
@@ -159,8 +163,14 @@ describe("OpenRouter TTS routing", () => {
   // The OpenRouter catalog lists Flux as English-only: Arabic text must
   // never be sent to it — it reroutes to the multilingual Fish model.
   it("never routes Arabic text to the English-only Flux model", () => {
-    expect(chooseOpenRouterTts("صباح الخير يا هيرميس", "flux")).toEqual({
-      ...OPENROUTER_TTS_SPECS.fish,
+    expect(chooseOpenRouterTts("صباح الخير يا هيرميس", "flux", "jarvis")).toEqual({
+      model_id: OPENROUTER_TTS_SPECS.fish.model_id,
+      voice_id: OPENROUTER_MALE_FISH_VOICE,
+      fallbackToFish: true,
+    });
+    expect(chooseOpenRouterTts("صباح الخير يا هيرميس", "flux", "gwen")).toEqual({
+      model_id: OPENROUTER_TTS_SPECS.fish.model_id,
+      voice_id: OPENROUTER_FEMALE_FISH_VOICE,
       fallbackToFish: true,
     });
     expect(chooseOpenRouterTts("اكتبلي كود Python", "flux").model_id).toBe(
@@ -168,18 +178,35 @@ describe("OpenRouter TTS routing", () => {
     );
   });
 
-  it("keeps each engine on its own documented voice", () => {
-    expect(chooseOpenRouterTts("Good morning Hermes", "flux")).toEqual({
-      ...OPENROUTER_TTS_SPECS.flux,
+  it("keeps each engine on its persona-matched voice", () => {
+    // Default / Jarvis (Male)
+    expect(chooseOpenRouterTts("Good morning Hermes", "flux", "jarvis")).toEqual({
+      model_id: OPENROUTER_TTS_SPECS.flux.model_id,
+      voice_id: OPENROUTER_MALE_FLUX_VOICE,
       fallbackToFish: false,
     });
-    expect(chooseOpenRouterTts("Good morning Hermes", "fish")).toEqual({
-      ...OPENROUTER_TTS_SPECS.fish,
+    expect(chooseOpenRouterTts("Good morning Hermes", "fish", "jarvis")).toEqual({
+      model_id: OPENROUTER_TTS_SPECS.fish.model_id,
+      voice_id: OPENROUTER_MALE_FISH_VOICE,
       fallbackToFish: false,
     });
-    expect(chooseOpenRouterTts("صباح الخير", "fish").voice_id).toBe(
-      "b347db033a6549378b48d00acb0d06cd",
+    expect(chooseOpenRouterTts("صباح الخير", "fish", "jarvis").voice_id).toBe(
+      OPENROUTER_MALE_FISH_VOICE,
     );
-    expect(chooseOpenRouterTts("Hello there", "flux").voice_id).toBe("flux-alexis-en");
+
+    // Gwen (Female)
+    expect(chooseOpenRouterTts("Good morning Hermes", "flux", "gwen")).toEqual({
+      model_id: OPENROUTER_TTS_SPECS.flux.model_id,
+      voice_id: OPENROUTER_FEMALE_FLUX_VOICE,
+      fallbackToFish: false,
+    });
+    expect(chooseOpenRouterTts("Good morning Hermes", "fish", "gwen")).toEqual({
+      model_id: OPENROUTER_TTS_SPECS.fish.model_id,
+      voice_id: OPENROUTER_FEMALE_FISH_VOICE,
+      fallbackToFish: false,
+    });
+    expect(chooseOpenRouterTts("صباح الخير", "fish", "gwen").voice_id).toBe(
+      OPENROUTER_FEMALE_FISH_VOICE,
+    );
   });
 });
