@@ -17,6 +17,7 @@ vi.mock('@/lib/voice-playback', () => ({
 }))
 
 const SESSION_ID = 'session-under-test'
+const OWNER = { connectionId: 'local', profile: 'default' }
 const IDLE_STATE = { audioElement: null, messageId: null, sequence: 0, source: null, status: 'idle' as const }
 
 function assistantMessage(id: string, text: string): ChatMessage {
@@ -103,6 +104,7 @@ describe('useAutoSpeakReplies — Edge TTS fallback chain (#93515)', () => {
           conversationActive: false,
           failureLabel: 'read-aloud failed',
           markSpoken,
+          owner: OWNER,
           pendingReply,
           sessionId: SESSION_ID
         }),

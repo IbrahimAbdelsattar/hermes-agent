@@ -33,6 +33,8 @@ DEFAULT_ELEVENLABS_SPEED_MAX = 1.2
 DEFAULT_ELEVENLABS_STREAMING_MODEL_ID = "eleven_flash_v2_5"
 DEFAULT_MINIMAX_MODEL = "speech-02-hd"
 DEFAULT_MINIMAX_VOICE_ID = "English_expressive_narrator"
+DEFAULT_MINIMAX_SPEED_MIN = 0.5
+DEFAULT_MINIMAX_SPEED_MAX = 2.0
 DEFAULT_MINIMAX_BASE_URL = "https://api.minimax.io/v1/t2a_v2"
 DEFAULT_MINIMAX_CN_BASE_URL = "https://api.minimaxi.com/v1/t2a_v2"
 DEFAULT_MISTRAL_TTS_MODEL = "voxtral-mini-tts-2603"
@@ -418,10 +420,14 @@ def _generate_minimax_tts(text: str, output_path: str, tts_config: Dict[str, Any
         base_url = f"{base_url}{'&' if '?' in base_url else '?'}GroupId={group_id}"
     is_t2a_v2 = "t2a_v2" in base_url
     if is_t2a_v2:
+        speed = max(
+            DEFAULT_MINIMAX_SPEED_MIN,
+            min(DEFAULT_MINIMAX_SPEED_MAX, _provider_speed(tts_config, "minimax")),
+        )
         payload = {
             "model": model, "text": text,
             "voice_setting": {
-                "voice_id": voice_id, "speed": _provider_speed(tts_config, "minimax"),
+                "voice_id": voice_id, "speed": speed,
                 "vol": mm_config.get("vol", 1.0),
                 "pitch": mm_config.get("pitch", 0), "emotion": mm_config.get("emotion", "neutral"),
             },

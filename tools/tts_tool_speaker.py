@@ -75,14 +75,8 @@ def _drain_chunks(chunk_queue: "queue.Queue[Optional[bytes]]") -> List[bytes]:
     return list(iter(chunk_queue.get, None))
 
 
-def _first_written_artifact(raw: object, requested: str) -> str:
-    """The audio path the TTS tool actually wrote, falling back to the requested one.
-
-    ``text_to_speech_tool`` reports its artifacts (``file_path``/``file_paths``) in a JSON
-    envelope, and they often land beside — not at — the requested path: a command provider's
-    declared ``format`` rewrites the suffix, and voice-compatible delivery ffmpeg-converts to
-    ``.ogg``. Gating playback on the requested path alone drops every such sentence silently,
-    so prefer the first reported artifact that actually exists and is non-empty."""
+def _written_artifacts(raw: object, requested: str) -> List[str]:
+    """Every non-empty audio path reported by the TTS tool, with the requested path as fallback."""
     candidates: List[str] = []
     try:
         payload = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -92,10 +86,13 @@ def _first_written_artifact(raw: object, requested: str) -> str:
                 candidates = [p for p in reported if isinstance(p, str)]
     except (ValueError, TypeError):
         pass
-    for path in candidates:
+    artifacts: List[str] = []
+    for path in [*candidates, requested]:
+        if path in artifacts:
+            continue
         if os.path.isfile(path) and os.path.getsize(path) > 0:
-            return path
-    return requested
+            artifacts.append(path)
+    return artifacts
 
 
 class _SyncSentencePipeline:
@@ -108,7 +105,7 @@ class _SyncSentencePipeline:
 
     def __init__(self, stop_event: threading.Event, *, lookahead: int = 2):
         self._stop = stop_event
-        self._queue: "queue.Queue[Optional[tuple[str, Future]]]" = queue.Queue(maxsize=max(1, lookahead))
+        self._queue: "queue.Queue[Optional[tuple[str, Future[List[str]]]]]" = queue.Queue(maxsize=max(1, lookahead))
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts-sync-synth")
         self._player = spawn_context_thread(self._drain, name="tts-sync-play", daemon=True)
         self._player.start()
@@ -124,35 +121,39 @@ class _SyncSentencePipeline:
         self._player.join()
         self._executor.shutdown(wait=True)
 
-    def _synthesize_to_tmp(self, cleaned: str) -> Optional[str]:
+    def _synthesize_to_tmp(self, cleaned: str) -> List[str]:
         if self._stop.is_set():
-            return None
+            return []
         tmp_path = None
         try:
             fd, tmp_path = tempfile.mkstemp(suffix=".mp3")
             os.close(fd)
             raw = _origin().text_to_speech_tool(text=cleaned, output_path=tmp_path)
-            written = _first_written_artifact(raw, tmp_path)
-            if os.path.abspath(written) != os.path.abspath(tmp_path):
-                _unlink_quietly(tmp_path)  # provider wrote elsewhere: the placeholder is empty
+            written = _written_artifacts(raw, tmp_path)
+            if os.path.abspath(tmp_path) not in {os.path.abspath(path) for path in written}:
+                _unlink_quietly(tmp_path)
             return written
         except Exception as exc:
             logger.warning("Sync per-sentence TTS synthesis failed: %s", exc)
             _unlink_quietly(tmp_path)
-            return None
+            return []
 
     def _drain(self) -> None:
         for _sentence, future in iter(self._queue.get, None):
-            tmp_path = None
+            artifacts: List[str] = []
             try:
-                tmp_path = future.result()
-                if tmp_path and not self._stop.is_set() and os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
+                artifacts = future.result()
+                if not self._stop.is_set():
                     from tools.voice_mode import play_audio_file
-                    play_audio_file(tmp_path)
+                    for path in artifacts:
+                        if self._stop.is_set():
+                            break
+                        play_audio_file(path)
             except Exception as exc:
                 logger.warning("Sync per-sentence TTS failed: %s", exc)
             finally:
-                _unlink_quietly(tmp_path)
+                for path in artifacts:
+                    _unlink_quietly(path)
 
 
 class _StreamerPlayback:
@@ -352,9 +353,7 @@ def stream_tts_to_speaker(
         if streamer is None:
             sync_pipeline = _SyncSentencePipeline(stop_event)
         else:
-            with contextlib.suppress(Exception):
-                stream_max_len = origin._resolve_max_text_length(
-                    provider or origin._get_provider(tts_config), tts_config)
+            stream_max_len = int(streamer.max_input_length or 0)
             playback = _StreamerPlayback(streamer, stop_event)
         chunker = SentenceChunker.from_config(tts_config)
         spoken_sentences: list[str] = []  # skip duplicate/near-duplicate sentences (LLM repetition)
@@ -374,9 +373,15 @@ def stream_tts_to_speaker(
             if sync_pipeline is not None:
                 sync_pipeline.speak(cleaned)
                 return
-            if stream_max_len and len(cleaned) > stream_max_len:
-                cleaned = cleaned[:stream_max_len]
-            playback.speak(cleaned)
+            pieces = (
+                origin._split_text_for_tts(cleaned, stream_max_len)
+                if stream_max_len and len(cleaned) > stream_max_len
+                else [cleaned]
+            )
+            for piece in pieces:
+                if stop_event.is_set():
+                    break
+                playback.speak(piece)
         while not stop_event.is_set():
             try:
                 delta = text_queue.get(timeout=0.5)

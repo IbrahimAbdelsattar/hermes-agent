@@ -147,6 +147,20 @@ def test_edge_tts_relays_openai_goes_direct(voice_home, monkeypatch):
     assert _resolve()["tts"]["extra_body"] == {"consent_attestation": "I own this voice"}
 
 
+def test_openai_custom_base_without_direct_key_relays(voice_home, monkeypatch):
+    voice_home({
+        "tts": {
+            "provider": "openai",
+            "openai": {"base_url": "http://localhost:4003/v1"},
+        },
+    })
+    monkeypatch.delenv("VOICE_TOOLS_OPENAI_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    tts = _resolve()["tts"]
+    assert tts["mode"] == "relay"
+    assert "api_key" not in tts
+
+
 def test_openai_tts_direct_carries_configured_speed_and_instructions(voice_home, monkeypatch):
     voice_home({
         "tts": {

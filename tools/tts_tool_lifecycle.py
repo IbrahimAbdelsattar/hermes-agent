@@ -15,6 +15,8 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from agent.memory_provider import spawn_context_thread
+from hermes_constants import hermes_home_key
 from tools import tts_command_provider
 from tools.tts_command_provider import (
     BUILTIN_TTS_PROVIDERS, _get_command_tts_timeout, _get_named_provider_config,
@@ -22,13 +24,14 @@ from tools.tts_command_provider import (
     render_command_template as _render_command_tts_template)
 from tools.tts_tool_delivery import _origin
 from tools.tts_tool_local import (
-    _LOCAL_TTS_MODEL_CACHES, _load_kittentts_model_for_config, _load_piper_voice_for_config)
+    _LOCAL_TTS_MODEL_CACHES, _clear_tts_cache_for_home, _load_kittentts_model_for_config,
+    _load_piper_voice_for_config, _tts_cache_size_for_home)
 from tools.tts_tool_plugins import _lookup_plugin_provider
 
 logger = logging.getLogger("tools.tts_tool")
 
 _tts_lease_lock = threading.Lock()
-_tts_leases: set = set()
+_tts_leases: Dict[str, set[str]] = {}
 
 
 def _local_tts_warmers() -> Dict[str, Callable[[Dict[str, Any]], Any]]:
@@ -55,10 +58,15 @@ def _signal_user_tts_provider(name: str, tts_config: Dict[str, Any], hook: str) 
             template = str(cfg.get(f"{hook}_command") or "").strip()
             if not template:
                 return None
+            speed = cfg.get("speed")
+            if speed is None:
+                speed = tts_config.get("speed", "")
+            if speed is None:
+                speed = ""
             command = _render_command_tts_template(template, {
                 "voice": str(cfg.get("voice", "")),
                 "model": str(cfg.get("model", "")),
-                "speed": str(cfg.get("speed", tts_config.get("speed", "")))})
+                "speed": str(speed)})
 
             def _run() -> None:
                 try:
@@ -67,7 +75,7 @@ def _signal_user_tts_provider(name: str, tts_config: Dict[str, Any], hook: str) 
                         env_passthrough=_command_provider_env_passthrough(cfg))
                 except Exception as exc:  # noqa: BLE001 — best-effort hook
                     logger.debug("[TTS] %s_command for %s failed: %s", hook, name, exc)
-            threading.Thread(target=_run, name=f"tts-{hook}-{name}", daemon=True).start()
+            spawn_context_thread(_run, name=f"tts-{hook}-{name}", daemon=True).start()
             return hook
         plugin_provider = _lookup_plugin_provider(name)
         if plugin_provider is None:
@@ -91,7 +99,8 @@ def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None, provider: Opt
     warmer = _local_tts_warmers().get(name)
     if warmer is not None:
         cache = _LOCAL_TTS_MODEL_CACHES.get(name, {})
-        before, started = len(cache), time.monotonic()
+        home_key = hermes_home_key()
+        before, started = _tts_cache_size_for_home(cache, home_key), time.monotonic()
         try:
             warmer(tts_config)
         except Exception as exc:  # engine missing, download failed, bad voice…
@@ -99,7 +108,8 @@ def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None, provider: Opt
             result.update(action="error", error=str(exc))
             return result
         result.update(
-            warmed=True, action="loaded" if len(cache) > before else "cached",
+            warmed=True,
+            action="loaded" if _tts_cache_size_for_home(cache, home_key) > before else "cached",
             elapsed_ms=int((time.monotonic() - started) * 1000))
         logger.info("[TTS] warm-up %s: %s in %dms", name, result["action"], result["elapsed_ms"])
         return result
@@ -130,11 +140,11 @@ def release_tts_provider(provider: Optional[str] = None) -> Dict[str, Any]:
     if not name:
         tts_config = _origin()._load_tts_config()
         _signal_user_tts_provider(_origin()._get_provider(tts_config), tts_config, "release")
+    home_key = hermes_home_key()
     released = 0
     for cache_name, cache in _LOCAL_TTS_MODEL_CACHES.items():
         if not name or cache_name == name:
-            released += len(cache)
-            cache.clear()
+            released += _clear_tts_cache_for_home(cache, home_key)
     if released:
         logger.info("[TTS] released %d resident local model(s)", released)
     return {"released": released}
@@ -143,26 +153,35 @@ def release_tts_provider(provider: Optional[str] = None) -> Dict[str, Any]:
 def acquire_tts_lease(lease: str, tts_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Register ``lease`` (e.g. ``"desktop:read-aloud"``) and warm the provider. Re-acquiring is
     idempotent but still re-warms (cheap on a cache hit; heals a cache cleared elsewhere)."""
+    home_key = hermes_home_key()
     with _tts_lease_lock:
-        _tts_leases.add(lease)
-        holders = len(_tts_leases)
+        _tts_leases.setdefault(home_key, set()).add(lease)
+        holders = len(_tts_leases[home_key])
     return {**warm_tts_provider(tts_config), "leases": holders}
 
 
 def release_tts_lease(lease: str) -> Dict[str, Any]:
     """Drop ``lease``; the last one out unloads resident local models. A never-acquired lease is a
     no-op (still reports the holder count) so surfaces can call this unconditionally."""
+    home_key = hermes_home_key()
     with _tts_lease_lock:
-        _tts_leases.discard(lease)
-        holders = len(_tts_leases)
+        leases = _tts_leases.get(home_key)
+        if leases is None:
+            holders = 0
+        else:
+            leases.discard(lease)
+            holders = len(leases)
+            if not leases:
+                _tts_leases.pop(home_key, None)
         released = release_tts_provider()["released"] if holders == 0 else 0
     return {"leases": holders, "released": released}
 
 
 def tts_lease_holders() -> List[str]:
     """Snapshot of live lease names (diagnostics / tests)."""
+    home_key = hermes_home_key()
     with _tts_lease_lock:
-        return sorted(_tts_leases)
+        return sorted(_tts_leases.get(home_key, ()))
 
 
 def _reset_tts_leases_for_tests() -> None:

@@ -9,13 +9,30 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agent.tts_provider import VALID_OUTPUT_FORMATS
+from agent.tts_provider import VALID_OUTPUT_FORMATS, resolve_output_format
 from tools.tts_command_provider import (
     BUILTIN_TTS_PROVIDERS, DEFAULT_COMMAND_TTS_OUTPUT_FORMAT, _get_named_provider_config,
     _is_command_provider_config)
 from tools.tts_tool_delivery import _configured_output_format, _provider_config, _provider_speed
 
 logger = logging.getLogger("tools.tts_tool")
+
+
+def _plugin_output_format(tts_config: Dict[str, Any], provider: str, output_path: Optional[str] = None) -> str:
+    suffix = Path(output_path).suffix.lower().strip().lstrip(".") if output_path else ""
+    if suffix in VALID_OUTPUT_FORMATS:
+        return resolve_output_format(suffix)
+    configured = _configured_output_format(tts_config, provider) or DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
+    return resolve_output_format(configured)
+
+
+def _configured_plugin_tts_output_path(
+    path: Path, tts_config: Dict[str, Any], provider: str,
+) -> Path:
+    suffix = path.suffix.lower().strip().lstrip(".")
+    if suffix in VALID_OUTPUT_FORMATS:
+        return path
+    return path.with_suffix(f".{_plugin_output_format(tts_config, provider)}")
 
 
 def _lookup_plugin_provider(key: str, *, discover: bool = True, retry: bool = False):
@@ -68,10 +85,7 @@ def _dispatch_to_plugin_provider(text: str, output_path: str, provider: str, tts
     voice = _setting("voice")
     model = _setting("model")
     speed = _provider_speed(cfg, key)
-    output_format = _configured_output_format(cfg, key) or DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
-    output_suffix = Path(output_path).suffix.lower().strip().lstrip(".")
-    if output_suffix in VALID_OUTPUT_FORMATS:
-        output_format = output_suffix
+    output_format = _plugin_output_format(cfg, key, output_path)
     logger.info("Generating speech with plugin TTS provider '%s'...", key)
     written = plugin_provider.synthesize(
         text, output_path, voice=str(voice) if voice else None,

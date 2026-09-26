@@ -813,16 +813,7 @@ export const ru = defineLocale({
         recordKey: 'Горячая клавиша голосового ввода',
         maxRecordingSeconds: 'Макс. длительность записи',
         autoTts: 'Авто-TTS на сервере',
-        clientDirect: 'Прямые вызовы провайдера',
-        beepEnabled: 'Сигналы записи',
-        beepVolume: 'Громкость сигналов записи',
-        thinkingSound: 'Звук во время размышления',
-        silenceThreshold: 'Порог тишины при записи',
-        silenceDuration: 'Длительность тишины при записи',
-        bargeIn: 'Перебивание голосом',
-        bargeInGraceSeconds: 'Задержка перед перебиванием',
-        bargeInThresholdMultiplier: 'Множитель порога перебивания',
-        stopPhrases: 'Голосовые команды остановки'
+        clientDirect: 'Прямые вызовы провайдера'
       },
       stt: {
         enabled: 'Распознавание речи',

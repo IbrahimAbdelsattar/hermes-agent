@@ -104,6 +104,21 @@ def test_speed_precedence_reaches_wire(tmp_path, monkeypatch):
     assert captured["speed"] == 0.75
 
 
+def test_config_api_key_satisfies_requirements(tmp_path, monkeypatch):
+    from tools import tts_tool
+
+    home = _isolate(monkeypatch, tmp_path)
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text(yaml.safe_dump({
+        "tts": {
+            "provider": "openrouter",
+            "openrouter": {"api_key": "or-config-secret"},
+        },
+    }))
+
+    assert tts_tool.check_tts_requirements() is True
+
+
 def test_fish_model_voice_and_json_error_reporting(tmp_path, monkeypatch):
     """Fish model with an explicit voice override; a JSON error surfaces as a named failure."""
     from tools import tts_tool

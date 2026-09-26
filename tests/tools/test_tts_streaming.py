@@ -108,14 +108,19 @@ def test_elevenlabs_available_reflects_key(monkeypatch):
 
 
 def test_openai_available_reflects_audio_key_resolution(monkeypatch):
-    monkeypatch.setattr(ts, "_openai_config_api_key", lambda: "")
-    monkeypatch.setattr(ts, "resolve_openai_audio_api_key", lambda: "voice-key")
+    monkeypatch.setattr(
+        "tools.tts_tool_openai._resolve_openai_audio_client_config",
+        lambda: ("voice-key", None, False),
+    )
     assert ts.OpenAIStreamer.available() is True
-    monkeypatch.setattr(ts, "resolve_openai_audio_api_key", lambda: "")
+
+    def _unavailable():
+        raise ValueError("no route")
+
+    monkeypatch.setattr(
+        "tools.tts_tool_openai._resolve_openai_audio_client_config", _unavailable
+    )
     assert ts.OpenAIStreamer.available() is False
-    # tts.openai.api_key from config.yaml counts too
-    monkeypatch.setattr(ts, "_openai_config_api_key", lambda: "cfg-key")
-    assert ts.OpenAIStreamer.available() is True
 
 
 def test_openai_streamer_forwards_consent_attestation(monkeypatch):
@@ -144,9 +149,12 @@ def test_openai_streamer_forwards_consent_attestation(monkeypatch):
             self.audio = MagicMock()
             self.audio.speech.with_streaming_response = _StreamingCreate()
 
-    monkeypatch.setattr(ts, "resolve_openai_audio_api_key", lambda: "env-key")
     monkeypatch.setattr("hermes_cli.config.get_env_value", lambda key, *args: None)
     monkeypatch.setattr("openai.OpenAI", _OpenAI)
+    monkeypatch.setattr(
+        "tools.tts_tool_openai._resolve_openai_audio_client_config",
+        lambda: ("env-key", None, False),
+    )
 
     section = {"api_key": "k", "consent_attestation": "I have consent"}
     list(ts.OpenAIStreamer({"openai": section}, section).stream("hi"))
@@ -180,9 +188,12 @@ def test_openai_streamer_prefers_configured_api_key(monkeypatch):
             self.audio = MagicMock()
             self.audio.speech.with_streaming_response = _StreamingCreate()
 
-    monkeypatch.setattr(ts, "resolve_openai_audio_api_key", lambda: "env-key")
     monkeypatch.setattr("hermes_cli.config.get_env_value", lambda key, *args: None)
     monkeypatch.setattr("openai.OpenAI", _OpenAI)
+    monkeypatch.setattr(
+        "tools.tts_tool_openai._resolve_openai_audio_client_config",
+        lambda: ("cfg-key", "http://local-tts.example/v1", False),
+    )
 
     config = {
         "provider": "openai",
@@ -193,6 +204,153 @@ def test_openai_streamer_prefers_configured_api_key(monkeypatch):
     assert streamer is not None
     assert list(streamer.stream("Streaming test.")) == [b"\x01\x00"]
     assert captured["client"]["api_key"] == "cfg-key"
+
+
+def test_streamers_forward_provider_settings(monkeypatch, tmp_path):
+    eleven_calls = []
+
+    class _ElevenClient:
+        def __init__(self, **kwargs):
+            self.text_to_speech = MagicMock()
+            self.text_to_speech.convert.side_effect = lambda **kwargs: (
+                eleven_calls.append(kwargs) or iter((b"\x00\x00",))
+            )
+
+    monkeypatch.setattr("tools.tts_tool._import_elevenlabs", lambda: _ElevenClient)
+    monkeypatch.setattr(ts, "_resolve_key", lambda env, provider: "eleven-key")
+    eleven_config = {
+        "speed": 9.0,
+        "elevenlabs": {"speed": 0.8, "streaming_model_id": "eleven_flash_v2_5"},
+    }
+    list(ts.ElevenLabsStreamer(eleven_config, eleven_config["elevenlabs"]).stream("hello"))
+    assert eleven_calls[-1]["speed"] == 0.8
+
+    eleven_config["elevenlabs"] = {"model_id": "eleven_ttv_v3", "speed": 0.8}
+    list(ts.ElevenLabsStreamer(eleven_config, eleven_config["elevenlabs"]).stream("hello"))
+    assert "speed" not in eleven_calls[-1]
+
+    openai_calls = _patch_openai_speech(monkeypatch, {})
+    monkeypatch.setattr(
+        "tools.tts_tool_openai._resolve_openai_audio_client_config",
+        lambda: ("openai-key", None, False),
+    )
+    openai_config = {
+        "speed": 1.5,
+        "openai": {"speed": 0.75, "instructions": "Speak brightly."},
+    }
+    list(ts.OpenAIStreamer(openai_config, openai_config["openai"]).stream("hello"))
+    assert openai_calls[-1]["speed"] == 0.75
+    assert openai_calls[-1]["instructions"] == "Speak brightly."
+
+    persona = tmp_path / "persona.md"
+    persona.write_text("Speak like a butler. TRANSCRIPT: {transcript}", encoding="utf-8")
+    gemini_calls = []
+
+    class _GeminiResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_lines(self, decode_unicode=True):
+            yield 'data: {"candidates":[{"content":{"parts":[{"inlineData":{"data":"AAE="}}]}}]}'
+
+    def _gemini_post(url, **kwargs):
+        gemini_calls.append(kwargs)
+        return _GeminiResponse()
+
+    monkeypatch.setattr(ts, "_gemini_key", lambda: "gemini-key")
+    monkeypatch.setattr("requests.post", _gemini_post)
+    monkeypatch.setattr(
+        "tools.tts_tool_providers._rewrite_gemini_tts_audio_tags",
+        lambda text, persona_prompt="": f"[excited] {text}",
+    )
+    gemini_config = {
+        "gemini": {
+            "model": "gemini-3.1-flash-tts-preview",
+            "audio_tags": True,
+            "persona_prompt_file": str(persona),
+        },
+    }
+    list(ts.GeminiStreamer(gemini_config, gemini_config["gemini"]).stream("hello"))
+    gemini_prompt = gemini_calls[-1]["json"]["contents"][0]["parts"][0]["text"]
+    assert "[excited] hello" in gemini_prompt
+    assert "Speak like a butler" in gemini_prompt
+
+    import asyncio
+    import types
+
+    xai_payloads = []
+
+    class _WebSocket:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def send(self, payload):
+            xai_payloads.append(json.loads(payload))
+
+        async def recv(self):
+            return "done"
+
+    fake_websockets = types.ModuleType("websockets")
+    fake_websockets.connect = lambda *args, **kwargs: _WebSocket()
+    monkeypatch.setitem(sys.modules, "websockets", fake_websockets)
+    monkeypatch.setattr(
+        "tools.xai_http.resolve_xai_http_credentials",
+        lambda **kwargs: {"api_key": "xai-key"},
+    )
+    monkeypatch.setattr(
+        "tools.tts_tool_providers._apply_xai_auto_speech_tags",
+        lambda text: f"[whispers] {text}",
+    )
+    xai_config = {
+        "speed": 9.0,
+        "xai": {
+            "language": "pt-BR",
+            "speed": 0.8,
+            "text_normalization": True,
+            "auto_speech_tags": True,
+        },
+    }
+    xai_streamer = ts.XAIStreamer(xai_config, xai_config["xai"])
+    asyncio.run(_collect_async(xai_streamer))
+    assert xai_payloads[-1] == {
+        "text": "[whispers] hello",
+        "voice_id": "eve",
+        "language": "pt-BR",
+        "response_format": "pcm",
+        "speed": 0.8,
+        "text_normalization": True,
+    }
+
+
+async def _collect_async(streamer):
+    return [chunk async for chunk in streamer._async_frames("hello")]
+
+
+def test_streamer_effective_input_limits_follow_streaming_model(monkeypatch):
+    monkeypatch.setattr(ts.ElevenLabsStreamer, "available", staticmethod(lambda: True))
+    config = {
+        "provider": "elevenlabs",
+        "elevenlabs": {
+            "model_id": "eleven_multilingual_v2",
+            "streaming_model_id": "eleven_flash_v2_5",
+        },
+    }
+    streamer = ts.resolve_streaming_provider(config)
+    assert streamer.max_input_length == 40000
+
+    config["max_text_length"] = 1234
+    assert streamer.max_input_length == 1234
+    config["elevenlabs"]["max_text_length"] = 567
+    assert streamer.max_input_length == 567
 
 
 # ── Dispatch: chunked streamer path ──────────────────────────────────────
@@ -1129,6 +1287,10 @@ def test_openai_streamer_honors_endpoint_reported_rate_in_wav_playback(monkeypat
     from tools import tts_tool_speaker as sp
 
     _patch_openai_speech(monkeypatch, {"content-type": "audio/pcm", "x-audio-sample-rate": "44100"})
+    monkeypatch.setattr(
+        "tools.tts_tool_openai._resolve_openai_audio_client_config",
+        lambda: ("sk-x", None, False),
+    )
     streamer = ts.OpenAIStreamer({}, {"api_key": "sk-x", "pcm_sample_rate": "22050"})
 
     wav_rates = []
@@ -1320,3 +1482,67 @@ def test_streamer_prefetch_preserves_context(monkeypatch):
         profile.reset(token)
 
     assert seen == ["b"]
+
+
+def test_streamer_splits_oversized_sentence_without_truncation(monkeypatch):
+    from tools import tts_tool_speaker as speaker
+
+    streamed = []
+
+    class _Provider(ts.StreamingTTSProvider):
+        max_input_length = 8
+
+        @staticmethod
+        def available():
+            return True
+
+        def stream(self, text):
+            streamed.append(text)
+            yield b"\x00\x00"
+
+    monkeypatch.setattr(speaker._StreamerPlayback, "_device_usable", lambda self: False)
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.voice_mode",
+        MagicMock(play_audio_file=lambda _path: None),
+    )
+    text = "abcdefghijklmnopqrstuvwxyz."
+    with patch("tools.tts_streaming.resolve_streaming_provider", return_value=_Provider({}, {})):
+        speaker.stream_tts_to_speaker(
+            _drain_queue([text]), threading.Event(), threading.Event()
+        )
+
+    assert streamed == ["abcdefgh", "ijklmnop", "qrstuvwx", "yz."]
+    assert "".join(streamed) == text
+
+
+def test_sync_pipeline_plays_and_cleans_every_reported_artifact(monkeypatch, tmp_path):
+    from tools import tts_tool
+    from tools.tts_tool_speaker import stream_tts_to_speaker
+
+    artifacts = [tmp_path / "one.ogg", tmp_path / "two.ogg"]
+    for index, path in enumerate(artifacts):
+        path.write_bytes(bytes([index + 1]) * 32)
+
+    def fake_synth(text, output_path):
+        return json.dumps({
+            "success": True,
+            "file_path": str(artifacts[0]),
+            "file_paths": [str(path) for path in artifacts],
+        })
+
+    played = []
+    fake_vm = MagicMock()
+    fake_vm.play_audio_file.side_effect = lambda path: played.append(
+        (path, os.path.getsize(path))
+    )
+    monkeypatch.setattr(tts_tool, "text_to_speech_tool", fake_synth)
+    monkeypatch.setitem(sys.modules, "tools.voice_mode", fake_vm)
+
+    with patch("tools.tts_streaming.resolve_streaming_provider", return_value=None):
+        stream_tts_to_speaker(
+            _drain_queue(["Hello there. "]), threading.Event(), threading.Event()
+        )
+
+    assert played == [(str(artifacts[0]), 32), (str(artifacts[1]), 32)]
+    assert not any(path.exists() for path in artifacts)

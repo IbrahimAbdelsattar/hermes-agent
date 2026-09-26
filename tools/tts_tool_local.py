@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
+from hermes_constants import hermes_home_key
 from tools.tts_tool_delivery import _finalize_wav_output, _origin, _provider_speed, _section, _wav_sidecar_path
 
 logger = logging.getLogger("tools.tts_tool")
@@ -35,6 +36,32 @@ _piper_voice_cache: Dict[str, Any] = {}
 _kittentts_model_cache: Dict[str, Any] = {}
 _LOCAL_TTS_MODEL_CACHES: Dict[str, Dict[str, Any]] = {
     "piper": _piper_voice_cache, "kittentts": _kittentts_model_cache}
+_PROFILE_CACHE_KEY_MARKER = "::profile::"
+
+
+def _profile_cache_key(value: Any) -> str:
+    """Namespace a local model key by the active profile home."""
+    return f"{hermes_home_key()}{_PROFILE_CACHE_KEY_MARKER}{value}"
+
+
+def _profile_cache_prefix(home_key: str) -> str:
+    return f"{home_key}{_PROFILE_CACHE_KEY_MARKER}"
+
+
+def _tts_cache_size_for_home(cache: Dict[str, Any], home_key: str) -> int:
+    """Count resident entries owned by *home_key* without counting sibling profiles."""
+    prefix = _profile_cache_prefix(home_key)
+    return sum(1 for key in cache if isinstance(key, str) and key.startswith(prefix))
+
+
+def _clear_tts_cache_for_home(cache: Dict[str, Any], home_key: str) -> int:
+    """Drop this profile's entries and legacy unscoped entries, leaving sibling profiles intact."""
+    prefix = _profile_cache_prefix(home_key)
+    owned = [key for key in cache if isinstance(key, str) and key.startswith(prefix)]
+    legacy = [key for key in cache if not isinstance(key, str) or _PROFILE_CACHE_KEY_MARKER not in key]
+    for key in (*owned, *legacy):
+        cache.pop(key, None)
+    return len(owned) + len(legacy)
 
 
 def _tts_cache_get_or_load(cache: Dict[str, Any], key: str, load: Callable[[], Any]) -> Any:
@@ -51,8 +78,11 @@ def _tts_cache_get_or_load(cache: Dict[str, Any], key: str, load: Callable[[], A
 
 
 def _run_helper(cmd: list, timeout: int) -> subprocess.CompletedProcess:
+    from tools.environments.local import served_profile_child_env
+
     return subprocess.run(
-        cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, stdin=subprocess.DEVNULL,
+        cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout,
+        stdin=subprocess.DEVNULL, env=served_profile_child_env(inherit_credentials=False),
     )
 
 
@@ -130,7 +160,7 @@ def _load_piper_voice_for_config(tts_config: Dict[str, Any]) -> Tuple[Any, Dict[
         return v
 
     # speaker_id is applied per call via syn_config, so one instance serves every speaker.
-    cache_key = f"{model_path}::cuda={use_cuda}"
+    cache_key = _profile_cache_key(f"{model_path}::cuda={use_cuda}")
     return _tts_cache_get_or_load(_piper_voice_cache, cache_key, _load_piper_voice), piper_config
 
 
@@ -180,7 +210,8 @@ def _load_kittentts_model_for_config(tts_config: Dict[str, Any]) -> Tuple[Any, D
         logger.info("[KittenTTS] Model loaded successfully")
         return m
 
-    return _tts_cache_get_or_load(_kittentts_model_cache, model_name, _load_kittentts_model), kt_config
+    cache_key = _profile_cache_key(model_name)
+    return _tts_cache_get_or_load(_kittentts_model_cache, cache_key, _load_kittentts_model), kt_config
 
 
 def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:

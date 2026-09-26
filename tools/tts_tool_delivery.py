@@ -251,8 +251,13 @@ def _ffmpeg_run(
     ffmpeg: str, args: List[str], *, timeout: int = 30, check: bool = False, capture: bool = True,
 ) -> subprocess.CompletedProcess:
     """Run ``ffmpeg <args>`` headless (no stdin, hidden window on Windows)."""
-    return subprocess.run([ffmpeg, *args], capture_output=capture, check=check, timeout=timeout,
-                          stdin=subprocess.DEVNULL, creationflags=windows_hide_flags())
+    from tools.environments.local import served_profile_child_env
+
+    return subprocess.run(
+        [ffmpeg, *args], capture_output=capture, check=check, timeout=timeout,
+        stdin=subprocess.DEVNULL, creationflags=windows_hide_flags(),
+        env=served_profile_child_env(inherit_credentials=False),
+    )
 
 
 def _remove_quietly(path: Optional[str]) -> None:

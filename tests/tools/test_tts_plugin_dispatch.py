@@ -28,6 +28,7 @@ helpers.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import pytest
@@ -211,6 +212,43 @@ class TestPluginDispatch:
         assert provider.last_call["kwargs"] == {
             "voice": "global-voice", "model": "global-model", "speed": 0.8, "format": "flac",
         }
+
+    def test_unsupported_format_falls_back_to_plugin_default(self):
+        provider = _FakeTTSProvider(name="cartesia")
+        tts_registry.register_provider(provider)
+        config = {
+            "output_format": "aac",
+            "providers": {"cartesia": {"output_format": "aac"}},
+        }
+
+        tts_tool._dispatch_to_plugin_provider(
+            text="hello", output_path="/tmp/out.bin", provider="cartesia", tts_config=config,
+        )
+
+        assert provider.last_call["kwargs"]["format"] == "mp3"
+
+        path, error = tts_tool._resolve_output_base(
+            None, "cartesia", None, False, config,
+        )
+        assert error is None
+        assert Path(path).suffix == ".mp3"
+
+    def test_output_path_rewrites_unsupported_plugin_suffix(self):
+        config = {
+            "output_format": "aac",
+            "providers": {"cartesia": {"output_format": "flac"}},
+        }
+        path, error = tts_tool._resolve_output_base(
+            "/tmp/out.aac", "cartesia", None, False, config,
+        )
+        assert error is None
+        assert Path(path).suffix == ".flac"
+
+        path, error = tts_tool._resolve_output_base(
+            "/tmp/out.wav", "cartesia", None, False, config,
+        )
+        assert error is None
+        assert Path(path).suffix == ".wav"
 
     def test_unregistered_name_returns_none(self):
         result = tts_tool._dispatch_to_plugin_provider(

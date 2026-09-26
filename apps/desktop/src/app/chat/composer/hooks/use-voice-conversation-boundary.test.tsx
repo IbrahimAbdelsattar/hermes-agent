@@ -25,7 +25,10 @@ vi.mock('@/hermes', () => ({
   hermesApi: mocks.config,
   speakText: vi.fn()
 }))
-vi.mock('@/api/client', () => ({ profileScoped: (value: unknown) => value }))
+vi.mock('@/api/client', () => ({
+  ownerScoped: (value: unknown) => value,
+  profileScoped: (value: unknown) => value
+}))
 vi.mock('./use-mic-recorder', () => ({ useMicRecorder: () => ({ handle: mocks.mic, level: 0 }) }))
 vi.mock('@/lib/voice-barge-in', () => ({ monitorSpeechDuringPlayback: () => vi.fn() }))
 vi.mock('@/lib/thinking-sound', () => ({ startThinkingSound: vi.fn(), stopThinkingSound: vi.fn() }))
@@ -101,6 +104,7 @@ it('speaks a sealed narration while busy and keeps the session open for the fina
           hook.rerender({ busy: true })
         }),
         onTranscribeAudio: async () => 'Check the branch',
+        owner: {},
         pendingResponse: () => collectUnspokenTurnSpeech(messages, null)
       }),
     { initialProps: { busy: false } }

@@ -241,6 +241,13 @@ class TestMinimaxTtsT2aV2:
         mock_post, _ = self._run({"speed": 1.25, "minimax": {"speed": None}}, tmp_path, monkeypatch)
         assert mock_post.call_args[1]["json"]["voice_setting"]["speed"] == 1.25
 
+    def test_speed_is_clamped_to_minimax_range(self, tmp_path, monkeypatch):
+        mock_post, _ = self._run({"minimax": {"speed": 9.0}}, tmp_path, monkeypatch)
+        assert mock_post.call_args[1]["json"]["voice_setting"]["speed"] == 2.0
+
+        mock_post, _ = self._run({"minimax": {"speed": 0.1}}, tmp_path, monkeypatch)
+        assert mock_post.call_args[1]["json"]["voice_setting"]["speed"] == 0.5
+
     def test_decodes_hex_audio(self, tmp_path, monkeypatch):
         """t2a_v2 hex-encoded audio is decoded and written verbatim."""
         _, output = self._run({}, tmp_path, monkeypatch)

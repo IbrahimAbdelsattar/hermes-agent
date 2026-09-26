@@ -9,6 +9,9 @@ resident local models.
 
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
 import threading
 
 import pytest
@@ -212,6 +215,93 @@ def test_release_unknown_lease_is_noop(fake_piper):
     assert len(tts_tool_local._piper_voice_cache) == 1
 
 
+def test_profile_leases_and_piper_cache_survive_a_b_a(fake_piper, tmp_path):
+    from hermes_constants import (
+        hermes_home_key, reset_hermes_home_override, set_hermes_home_override,
+    )
+
+    home_a = tmp_path / "profile-a"
+    home_b = tmp_path / "profile-b"
+    home_a.mkdir()
+    home_b.mkdir()
+    key_a = hermes_home_key(home_a)
+    key_b = hermes_home_key(home_b)
+
+    token = set_hermes_home_override(home_a)
+    try:
+        assert tts_tool_lifecycle.acquire_tts_lease("shared", fake_piper)["leases"] == 1
+        keys_a = {key for key in tts_tool_local._piper_voice_cache if key_a in key}
+    finally:
+        reset_hermes_home_override(token)
+    assert keys_a
+
+    token = set_hermes_home_override(home_b)
+    try:
+        assert tts_tool_lifecycle.acquire_tts_lease("shared", fake_piper)["leases"] == 1
+        keys_b = {key for key in tts_tool_local._piper_voice_cache if key_b in key}
+        assert tts_tool_lifecycle.tts_lease_holders() == ["shared"]
+    finally:
+        reset_hermes_home_override(token)
+    assert keys_b
+
+    token = set_hermes_home_override(home_a)
+    try:
+        assert tts_tool_lifecycle.release_tts_lease("shared") == {"leases": 0, "released": 1}
+        assert not any(key in tts_tool_local._piper_voice_cache for key in keys_a)
+        assert all(key in tts_tool_local._piper_voice_cache for key in keys_b)
+    finally:
+        reset_hermes_home_override(token)
+
+    token = set_hermes_home_override(home_b)
+    try:
+        assert tts_tool_lifecycle.release_tts_lease("shared") == {"leases": 0, "released": 1}
+    finally:
+        reset_hermes_home_override(token)
+
+    token = set_hermes_home_override(home_a)
+    try:
+        assert tts_tool_lifecycle.acquire_tts_lease("shared", fake_piper)["action"] == "loaded"
+        assert _FakePiperVoice.loads == 3
+        assert any(key_a in key for key in tts_tool_local._piper_voice_cache)
+    finally:
+        reset_hermes_home_override(token)
+
+
+def test_command_hooks_keep_profile_context_and_null_speed_uses_global(monkeypatch, tmp_path):
+    from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
+
+    home = tmp_path / "profile-command"
+    home.mkdir()
+    seen: list[tuple[str, str]] = []
+    done = threading.Event()
+
+    def _fake_run(command, timeout, env_passthrough=None):
+        seen.append((str(get_hermes_home()), command))
+        done.set()
+
+    monkeypatch.setattr(tts_command_provider, "run_command_provider", _fake_run)
+    cfg = {
+        "provider": "srv",
+        "speed": 1.25,
+        "providers": {"srv": {
+            "command": "srv say {input_path} {output_path}",
+            "warm_command": "warm {speed}",
+            "release_command": "release {speed}",
+            "speed": None,
+        }},
+    }
+    token = set_hermes_home_override(home)
+    try:
+        for hook in ("warm", "release"):
+            done.clear()
+            assert tts_tool_lifecycle._signal_user_tts_provider("srv", cfg, hook) == hook
+            assert done.wait(5)
+    finally:
+        reset_hermes_home_override(token)
+    assert [command for _, command in seen] == ["warm 1.25", "release 1.25"]
+    assert {profile for profile, _ in seen} == {str(home)}
+
+
 def test_acquire_failure_still_registers_lease(monkeypatch):
     def _boom():
         raise RuntimeError("engine missing")
@@ -302,4 +392,6 @@ def test_command_provider_runs_warm_and_release_commands(monkeypatch):
     done.clear()
     tts_tool_lifecycle.release_tts_lease("desktop:read-aloud")
     assert done.wait(5)
-    assert ran == ["curl -s localhost:5002/load?model='kokoro v1'", "curl -s localhost:5002/unload"]
+    quote = subprocess.list2cmdline([cfg["providers"]["srv"]["model"]]) if os.name == "nt" \
+        else shlex.quote(cfg["providers"]["srv"]["model"])
+    assert ran == [f"curl -s localhost:5002/load?model={quote}", "curl -s localhost:5002/unload"]

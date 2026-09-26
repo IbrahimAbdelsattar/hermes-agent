@@ -69,6 +69,35 @@ describe('voiceProviderKeys', () => {
 })
 
 describe('voice field option coverage', () => {
+  it('keeps supported voice behavior controls and omits fields Desktop does not consume', () => {
+    for (const key of [
+      'voice.voice_chat_mode',
+      'voice.record_key',
+      'voice.max_recording_seconds',
+      'voice.client_direct',
+      'voice.gpt_live.model',
+      'voice.gpt_live.voice',
+      'voice.gpt_live.instructions',
+      'voice.auto_tts'
+    ]) {
+      expect(voiceKeys, key).toContain(key)
+    }
+
+    for (const key of [
+      'voice.beep_enabled',
+      'voice.beep_volume',
+      'voice.thinking_sound',
+      'voice.silence_threshold',
+      'voice.silence_duration',
+      'voice.barge_in',
+      'voice.barge_in_grace_seconds',
+      'voice.barge_in_threshold_multiplier',
+      'voice.stop_phrases'
+    ]) {
+      expect(voiceKeys, key).not.toContain(key)
+    }
+  })
+
   it('offers the current gpt-4o-mini-tts voice set, not just the tts-1 six', () => {
     const voices = ENUM_OPTIONS['tts.openai.voice']
 

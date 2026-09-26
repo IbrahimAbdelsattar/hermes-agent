@@ -105,6 +105,7 @@ function renderConversation(overrides: { onInterrupt?: () => void; transcript?: 
         onStopWord,
         onSubmit,
         onTranscribeAudio,
+        owner: {},
         pendingResponse: () => null
       }),
     { initialProps: { busy: false } }

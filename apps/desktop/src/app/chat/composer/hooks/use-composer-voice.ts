@@ -232,6 +232,7 @@ export function useComposerVoice({
     onStopWord: () => setVoiceConversationActive(false),
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
+    owner: leaseOwner,
     pendingResponse: pendingTurnResponse,
     // Before the conversation opens the mic, wait for any in-flight wake.pause
     // to finish releasing the capture device (see wakePauseBarrierRef).
@@ -435,6 +436,7 @@ export function useComposerVoice({
     conversationActive: voiceConversationActive,
     failureLabel: t.assistant.thread.readAloudFailed,
     markSpoken: consumePendingResponse,
+    owner: leaseOwner,
     pendingReply: pendingResponse,
     sessionId
   })

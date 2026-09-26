@@ -40,14 +40,14 @@ from tools.tts_command_provider import (
 from tools.tool_backend_helpers import NOUS_MANAGED_PROVIDER
 from tools.tts_tool_delivery import (
     _configured_output_format, _resolve_max_text_length, _build_audio_delivery_files, _convert_to_opus,
-    _remove_quietly, _repair_ogg_container, _resolve_audio_delivery_profile, _split_text_for_tts)
+    _remove_quietly, _repair_ogg_container, _resolve_audio_delivery_profile, _section, _split_text_for_tts)
 from tools.tts_tool_providers import (
     _generate_edge_tts, _generate_elevenlabs, _generate_gemini_tts, _generate_minimax_tts,
     _generate_mistral_tts, _generate_xai_tts, _resolve_minimax_tts_runtime)
 from tools.tts_tool_local import _generate_kittentts, _generate_neutts, _generate_piper_tts
 from tools.tts_tool_plugins import (
-    _dispatch_to_plugin_provider, _plugin_provider_is_available,
-    _plugin_provider_is_voice_compatible)
+    _configured_plugin_tts_output_path, _dispatch_to_plugin_provider, _plugin_output_format,
+    _plugin_provider_is_available, _plugin_provider_is_voice_compatible)
 from tools.tts_tool_openai import _generate_deepinfra_tts, _generate_openai_tts, _has_openai_audio_backend
 from tools.tts_tool_openrouter import _generate_openrouter_tts
 
@@ -346,6 +346,8 @@ def _resolve_output_base(
         if command_provider_config is not None:
             file_path = _configured_command_tts_output_path(
                 file_path, command_provider_config, configured_default)
+        elif provider not in BUILTIN_TTS_PROVIDERS:
+            file_path = _configured_plugin_tts_output_path(file_path, config, provider)
         from agent.file_safety import is_write_approval_required, is_write_denied
         if is_write_denied(str(file_path)) or is_write_approval_required(str(file_path)):
             return None, _error_json(
@@ -355,9 +357,10 @@ def _resolve_output_base(
         if command_provider_config is not None:
             ext = _get_command_tts_output_format(
                 command_provider_config, default=configured_default)
+        elif provider not in BUILTIN_TTS_PROVIDERS:
+            ext = _plugin_output_format(config, provider)
         else:
-            ext = _configured_output_format(
-                config, provider, include_global=provider not in BUILTIN_TTS_PROVIDERS)
+            ext = _configured_output_format(config, provider, include_global=False)
             if not ext:
                 ext = "ogg" if want_opus and provider in _NATIVE_OPUS_PROVIDERS else "mp3"
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -560,7 +563,10 @@ _BUILTIN_REQUIREMENTS: Dict[str, Callable[[], bool]] = {
     "deepinfra": lambda: _package_installed("openai") and bool(_resolve_provider_key("DEEPINFRA_API_KEY", "deepinfra")),
     "minimax": _minimax_requirements,
     "xai": _xai_requirements,
-    "openrouter": lambda: bool(_resolve_provider_key("OPENROUTER_API_KEY", "openrouter")),
+    "openrouter": lambda: bool(
+        str(_section(_load_tts_config(), "openrouter").get("api_key") or "").strip()
+        or _resolve_provider_key("OPENROUTER_API_KEY", "openrouter")
+    ),
     "gemini": lambda: bool(_resolve_provider_key("GEMINI_API_KEY", "gemini") or _resolve_provider_key("GOOGLE_API_KEY", "gemini")),
     "mistral": lambda: _importable(_import_mistral_client) and bool(_resolve_provider_key("MISTRAL_API_KEY", "mistral")),
     "neutts": lambda: _check_neutts_available(),

@@ -16,8 +16,8 @@ import time
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, Iterator, List, Optional
 
-from tools.tool_backend_helpers import resolve_openai_audio_api_key
-from tools.tts_tool import _get_provider, _load_tts_config
+from tools.tts_tool import _get_provider
+from tools.tts_tool_delivery import _provider_speed, _resolve_max_text_length
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +118,17 @@ class StreamingTTSProvider(ABC):
     sample_rate: int = 24000
     channels: int = 1
     sample_width: int = 2  # bytes/sample (int16)
+    provider_name: str = ""
 
     def __init__(self, tts_config: Dict, section: Dict):
         self.tts_config = tts_config
         self.section = section
+
+    @property
+    def max_input_length(self) -> int:
+        if not self.provider_name:
+            return 0
+        return _resolve_max_text_length(self.provider_name, self.tts_config)
 
     @staticmethod
     @abstractmethod
@@ -149,7 +156,9 @@ def _try_instantiate(name: str, tts_config: Dict) -> Optional[StreamingTTSProvid
     if cls is None or not cls.available():
         return None
     try:
-        return cls(tts_config, tts_config.get(name) or {})
+        instance = cls(tts_config, tts_config.get(name) or {})
+        instance.provider_name = name
+        return instance
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("streaming provider %s init failed: %s", name, exc)
         return None
@@ -194,27 +203,43 @@ class ElevenLabsStreamer(StreamingTTSProvider):
     def available() -> bool:
         return bool(_resolve_key("ELEVENLABS_API_KEY", "elevenlabs"))
 
+    @property
+    def streaming_model_id(self) -> str:
+        from tools.tts_tool_providers import DEFAULT_ELEVENLABS_STREAMING_MODEL_ID
+        return str(self.section.get("streaming_model_id")
+                   or self.section.get("model_id")
+                   or DEFAULT_ELEVENLABS_STREAMING_MODEL_ID)
+
+    @property
+    def max_input_length(self) -> int:
+        config = dict(self.tts_config if isinstance(self.tts_config, dict) else {})
+        section = dict(self.section if isinstance(self.section, dict) else {})
+        section["model_id"] = self.streaming_model_id
+        config["elevenlabs"] = section
+        return _resolve_max_text_length("elevenlabs", config)
+
     def stream(self, text: str) -> Iterator[bytes]:
         from tools.tts_tool import _import_elevenlabs
         from tools.tts_tool_providers import (
-            DEFAULT_ELEVENLABS_STREAMING_MODEL_ID, DEFAULT_ELEVENLABS_VOICE_ID, _elevenlabs_environment_kwargs,
+            DEFAULT_ELEVENLABS_VOICE_ID, DEFAULT_ELEVENLABS_SPEED_MAX, DEFAULT_ELEVENLABS_SPEED_MIN,
+            _elevenlabs_environment_kwargs,
         )
         client = _import_elevenlabs()(
             api_key=_resolve_key("ELEVENLABS_API_KEY", "elevenlabs"), **_elevenlabs_environment_kwargs(self.section),
         )
-        yield from client.text_to_speech.convert(
-            text=text, voice_id=self.section.get("voice_id", DEFAULT_ELEVENLABS_VOICE_ID),
-            model_id=self.section.get("streaming_model_id",
-                                      self.section.get("model_id", DEFAULT_ELEVENLABS_STREAMING_MODEL_ID)),
-            output_format="pcm_24000")
-
-
-def _openai_config_api_key() -> str:
-    """Return ``tts.openai.api_key`` from config.yaml, or empty string."""
-    try:
-        return (_load_tts_config().get("openai") or {}).get("api_key") or ""
-    except Exception:
-        return ""
+        model_id = self.streaming_model_id
+        kwargs = {
+            "text": text,
+            "voice_id": self.section.get("voice_id", DEFAULT_ELEVENLABS_VOICE_ID),
+            "model_id": model_id,
+            "output_format": "pcm_24000",
+        }
+        if "v3" not in model_id.lower():
+            speed = _provider_speed(self.tts_config, "elevenlabs")
+            speed = max(DEFAULT_ELEVENLABS_SPEED_MIN, min(DEFAULT_ELEVENLABS_SPEED_MAX, speed))
+            if speed != 1.0:
+                kwargs["speed"] = speed
+        yield from client.text_to_speech.convert(**kwargs)
 
 
 def _sample_rate_from_headers(headers) -> Optional[int]:
@@ -253,16 +278,25 @@ class OpenAIStreamer(StreamingTTSProvider):
 
     @staticmethod
     def available() -> bool:
-        return bool(_openai_config_api_key() or resolve_openai_audio_api_key())
+        try:
+            from tools.tts_tool_openai import _resolve_openai_audio_client_config
+            _resolve_openai_audio_client_config()
+            return True
+        except ValueError:
+            return False
 
     def stream(self, text: str) -> Iterator[bytes]:
         from openai import OpenAI
-        from hermes_cli.config import get_env_value
-        client = OpenAI(
-            api_key=(self.section.get("api_key") or resolve_openai_audio_api_key()),
-            base_url=(self.section.get("base_url") or get_env_value("OPENAI_BASE_URL") or None))
-        from tools.tts_tool_openai import _openai_extra_body
-        extra = {"extra_body": body} if (body := _openai_extra_body(self.section)) else {}
+        from tools.tts_tool_openai import _openai_extra_body, _resolve_openai_audio_client_config
+        api_key, base_url, _is_managed = _resolve_openai_audio_client_config()
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        extra: Dict[str, Any] = {"extra_body": body} if (body := _openai_extra_body(self.section)) else {}
+        speed = _provider_speed(self.tts_config, "openai")
+        if speed != 1.0:
+            extra["speed"] = max(0.25, min(4.0, speed))
+        instructions = self.section.get("instructions")
+        if instructions:
+            extra["instructions"] = instructions
         with client.audio.speech.with_streaming_response.create(
             model=self.section.get("model", "gpt-4o-mini-tts"), voice=self.section.get("voice", "alloy"),
             input=text, response_format="pcm", **extra,
@@ -293,7 +327,9 @@ class GeminiStreamer(StreamingTTSProvider):
         import json as _json
         import requests
         from tools.tts_tool_providers import (
-            DEFAULT_GEMINI_TTS_BASE_URL, DEFAULT_GEMINI_TTS_MODEL, DEFAULT_GEMINI_TTS_VOICE)
+            DEFAULT_GEMINI_TTS_BASE_URL, DEFAULT_GEMINI_TTS_MODEL, DEFAULT_GEMINI_TTS_VOICE,
+            _compose_gemini_tts_prompt, _gemini_audio_tags_enabled, _read_gemini_persona_prompt,
+            _rewrite_gemini_tts_audio_tags)
         from hermes_cli.config import get_env_value
         api_key = _gemini_key()
         model = str(self.section.get("model", DEFAULT_GEMINI_TTS_MODEL)).strip() or DEFAULT_GEMINI_TTS_MODEL
@@ -302,8 +338,14 @@ class GeminiStreamer(StreamingTTSProvider):
         base_url = normalize_gemini_base_url(
             self.section.get("base_url") or get_env_value("GEMINI_BASE_URL") or DEFAULT_GEMINI_TTS_BASE_URL,
         )
+        persona_prompt = _read_gemini_persona_prompt(self.section)
+        tts_script = text
+        if _gemini_audio_tags_enabled(self.section, model):
+            tts_script = _rewrite_gemini_tts_audio_tags(text, persona_prompt=persona_prompt)
+        prompt_text = _compose_gemini_tts_prompt(
+            tts_script, self.section, persona_prompt=persona_prompt)
         payload = {
-            "contents": [{"parts": [{"text": text}]}],
+            "contents": [{"parts": [{"text": prompt_text}]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}
@@ -366,15 +408,27 @@ class XAIStreamer(StreamingTTSProvider):
     async def _async_frames(self, text: str):
         import json as _json
         import websockets
-        from tools.tts_tool_providers import DEFAULT_XAI_VOICE_ID
+        from tools.tts_tool_providers import (
+            DEFAULT_XAI_LANGUAGE, DEFAULT_XAI_SPEED_DEFAULT, DEFAULT_XAI_SPEED_MAX, DEFAULT_XAI_SPEED_MIN,
+            DEFAULT_XAI_VOICE_ID, _apply_xai_auto_speech_tags, _config_bool)
         from tools.xai_http import resolve_xai_http_credentials
         api_key = str(resolve_xai_http_credentials(prefer_api_key=True).get("api_key") or "").strip()
         if not api_key:
             raise RuntimeError("No xAI credentials for streaming TTS")
         voice = str(self.section.get("voice_id", DEFAULT_XAI_VOICE_ID)).strip() or DEFAULT_XAI_VOICE_ID
+        language = str(self.section.get("language", DEFAULT_XAI_LANGUAGE)).strip() or DEFAULT_XAI_LANGUAGE
+        if _config_bool(self.section.get("auto_speech_tags"), False):
+            text = _apply_xai_auto_speech_tags(text)
+        payload = {"text": text, "voice_id": voice, "language": language, "response_format": "pcm"}
+        speed = _provider_speed(self.tts_config, "xai")
+        speed = max(DEFAULT_XAI_SPEED_MIN, min(DEFAULT_XAI_SPEED_MAX, speed))
+        if speed != DEFAULT_XAI_SPEED_DEFAULT:
+            payload["speed"] = speed
+        if _config_bool(self.section.get("text_normalization"), False):
+            payload["text_normalization"] = True
         ws_url = str(self.section.get("streaming_url") or "wss://api.x.ai/v1/tts").strip()
         async with websockets.connect(ws_url, extra_headers={"Authorization": f"Bearer {api_key}"}) as ws:
-            await ws.send(_json.dumps({"text": text, "voice_id": voice, "response_format": "pcm"}))
+            await ws.send(_json.dumps(payload))
             try:
                 while True:
                     message = await ws.recv()

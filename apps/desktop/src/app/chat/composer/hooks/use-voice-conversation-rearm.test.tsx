@@ -127,6 +127,8 @@ vi.mock('@/i18n', () => ({
   })
 }))
 
+const OWNER = { connectionId: 'gw-bots', profile: 'bot-adam' }
+
 function renderRearmConversation(responseId: string, responseText: string) {
   let response: null | { id: string; pending: boolean; text: string } = null
 
@@ -140,6 +142,7 @@ function renderRearmConversation(responseId: string, responseText: string) {
           response = { id: responseId, pending: false, text: responseText }
         },
         onTranscribeAudio: async () => 'Hello',
+        owner: OWNER,
         pendingResponse: () => response
       }),
     { initialProps: { enabled: false } }
@@ -249,6 +252,8 @@ describe('useVoiceConversation playback rearm', () => {
 
     await waitFor(() =>
       expect(mocks.playSpeechText).toHaveBeenCalledWith('Fallback reply', {
+        connectionId: OWNER.connectionId,
+        profile: OWNER.profile,
         source: 'voice-conversation'
       })
     )

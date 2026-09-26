@@ -419,6 +419,18 @@ class TestGenerateCommandTts:
 
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX-only timeout semantics")
+    def test_null_provider_speed_falls_back_to_global(self, tmp_path):
+        out = tmp_path / "clip.mp3"
+        command = (
+            f'"{sys.executable}" -c "import pathlib, sys; '
+            f'pathlib.Path(sys.argv[1]).write_text(sys.argv[2])" '
+            f'{{output_path}} {{speed}}'
+        )
+        _generate_command_tts(
+            "hello", str(out), "speed", {"command": command, "speed": None}, {"speed": 1.25},
+        )
+        assert out.read_text(encoding="utf-8") == "1.25"
+
     def test_timeout_raises_runtime(self, tmp_path):
         config = {
             "command": f'"{sys.executable}" -c "import time; time.sleep(10)"',
@@ -590,6 +602,45 @@ class TestCommandTtsEnvPassthrough:
         env = captured["env"]
         assert env["MY_TTS_API_KEY"] == "sk-provider"
         assert "OPENAI_API_KEY" not in env
+
+    def test_env_passthrough_uses_active_profile_secret_scope(self, monkeypatch):
+        from agent.secret_scope import (
+            is_multiplex_active, reset_secret_scope, set_multiplex_active, set_secret_scope,
+        )
+
+        captured = {}
+
+        class _Stream:
+            def read(self, size):
+                return ""
+
+        class Proc:
+            returncode = 0
+            stdout = _Stream()
+            stderr = _Stream()
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(command, **kwargs):
+            captured["env"] = kwargs["env"]
+            return Proc()
+
+        monkeypatch.setenv("PROFILE_TTS_API_KEY", "launch-secret")
+        monkeypatch.setattr("tools.tts_command_provider.subprocess.Popen", fake_popen)
+        was_multiplex = is_multiplex_active()
+        set_multiplex_active(True)
+        token = set_secret_scope({"PROFILE_TTS_API_KEY": "profile-b-secret"})
+        try:
+            result = _run_command_tts(
+                "echo hi", timeout=1, env_passthrough=["PROFILE_TTS_API_KEY"]
+            )
+        finally:
+            reset_secret_scope(token)
+            set_multiplex_active(was_multiplex)
+
+        assert result.returncode == 0
+        assert captured["env"]["PROFILE_TTS_API_KEY"] == "profile-b-secret"
 
     def test_allowlist_parsed_from_provider_config(self):
         from tools.tts_command_provider import command_env_passthrough as _command_provider_env_passthrough

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import type { OwnerScope } from '@/api/client'
 import { useI18n } from '@/i18n'
 import { startThinkingSound, stopThinkingSound } from '@/lib/thinking-sound'
 import { monitorSpeechDuringPlayback } from '@/lib/voice-barge-in'
@@ -13,8 +14,6 @@ import {
 import { isVoiceStopCommand } from '@/lib/voice-stop-word'
 import { notify, notifyError } from '@/store/notifications'
 import { $voicePlayback } from '@/store/voice-playback'
-
-import { useComposerScope } from '../scope'
 
 import { useMicRecorder } from './use-mic-recorder'
 
@@ -36,6 +35,7 @@ interface VoiceConversationOptions {
   onStopWord?: () => void
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  owner: OwnerScope
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
   /** Awaited right before the mic is opened. Used to let the wake-word listener
@@ -55,6 +55,7 @@ export function useVoiceConversation({
   onStopWord,
   onSubmit,
   onTranscribeAudio,
+  owner,
   pendingResponse,
   consumePendingResponse,
   beforeMicOpen
@@ -62,12 +63,9 @@ export function useVoiceConversation({
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
   const { handle, level } = useMicRecorder(voiceCopy)
-  // The scope's session owner (a Bot's own connection + profile) picks the TTS
-  // voice; a ref keeps the long-lived turn closures below reading the current
-  // value.
-  const { connectionId: ownerConnectionId, profile: ownerProfile } = useComposerScope()
-  const ownerRef = useRef({ connectionId: ownerConnectionId, profile: ownerProfile })
-  ownerRef.current = { connectionId: ownerConnectionId, profile: ownerProfile }
+  // A ref keeps the long-lived turn closures reading the current owner.
+  const ownerRef = useRef(owner)
+  ownerRef.current = owner
   const [status, setStatus] = useState<ConversationStatus>('idle')
   const [muted, setMuted] = useState(false)
   const turnTimeoutRef = useRef<number | null>(null)

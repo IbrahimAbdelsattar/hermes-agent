@@ -162,8 +162,9 @@ MiniMax TTS selects its region, endpoint, and credential together:
 - `region: "cn"` uses `https://api.minimaxi.com/v1/t2a_v2` with `MINIMAX_CN_API_KEY`.
 - If `region` is omitted, `MINIMAX_API_KEY` keeps precedence for backward compatibility. If only `MINIMAX_CN_API_KEY` is configured, Hermes selects `cn`.
 - An explicitly selected region must have its matching credential. Hermes never borrows the other region's key. A `base_url` override does not change the selected credential, and an override pointing at the other region's official endpoint is rejected.
+- `hermes setup tts` asks for the region first and saves only the matching `MINIMAX_API_KEY` or `MINIMAX_CN_API_KEY`; declining the key leaves the configured region unchanged and falls back to Edge TTS.
 
-**Speed control**: `tts.speed` is the global fallback for backends that implement speed: Edge, ElevenLabs (except Eleven v3), OpenAI and DeepInfra's OpenAI-compatible path, xAI, MiniMax's `t2a_v2` endpoint, OpenRouter models that honor the field, KittenTTS, and command/plugin providers that consume the corresponding argument or placeholder. A provider's `speed` overrides the global value; a per-call `speed` overrides both. Providers without native speed control are not advertised as honoring it.
+**Speed control**: `tts.speed` is the global fallback for backends that implement speed: Edge, ElevenLabs (except Eleven v3), OpenAI and DeepInfra's OpenAI-compatible path, xAI, MiniMax's `t2a_v2` endpoint, OpenRouter models that honor the field, KittenTTS, and command/plugin providers that consume the corresponding argument or placeholder. A provider's `speed` overrides the global value; a per-call `speed` overrides both. Providers without native speed control are not advertised as honoring it. MiniMax's `t2a_v2` speed is clamped to its supported `0.5`–`2.0` range.
 
 `tts.output_format` is the default for command and plugin providers; a provider-specific command/plugin value overrides it, and an explicit `output_path` suffix wins. Built-in API formats use their provider's `response_format` or native output path. `tts.max_text_length` is a global fallback; a positive `tts.<provider>.max_text_length` takes precedence, and blank/null values retain provider defaults.
 
@@ -203,6 +204,10 @@ The rewrite uses `auxiliary.tts_audio_tags` and defaults to your main chat model
 
 **Cloned-voice consent (OpenAI-compatible endpoints)**: some self-hosted OpenAI-compatible TTS servers reject a cloned voice with `400 consent_required` unless the request carries a `consent_attestation` field. Set `tts.openai.consent_attestation` to the attestation text your server expects; Hermes forwards it verbatim in the request body on every OpenAI-compatible path (whole-file synthesis, streaming, and the desktop's client-direct voice). Leave it unset for the official OpenAI API — when unset, the field is not sent.
 
+**Custom endpoint credential isolation**: a custom `tts.openai.base_url` requires a direct credential from `tts.openai.api_key`, `VOICE_TOOLS_OPENAI_KEY`, or `OPENAI_API_KEY`. Hermes never sends a managed Nous gateway token to that endpoint. A server-side TTS request fails with a configuration error when no direct credential exists; client-direct voice mode safely falls back to the gateway relay. The managed `tts.provider: nous` selection also rejects a custom base URL instead of silently ignoring it.
+
+**Streaming settings**: chunked playback uses the same provider controls as whole-file synthesis. ElevenLabs sends speed for non-v3 streaming models; OpenAI sends speed and instructions; xAI sends language, speed, text normalization, and applies its audio-tag rewrite when enabled; Gemini composes its persona prompt and optional audio tags into the streamed prompt.
+
 
 ### Input length limits
 
@@ -241,7 +246,7 @@ tts:
     max_text_length: 8192   # raise or lower the provider cap
 ```
 
-Only positive integers are honored. Zero, negative, non-numeric, or boolean values fall through to the provider default, so a broken config can't accidentally bypass the provider request limit.
+Only positive integers are honored. Zero, negative, non-numeric, or boolean values fall through to the provider default, so a broken config can't accidentally bypass the provider request limit. Speaker streaming applies the resolved cap to every completed sentence, splitting oversized text instead of truncating it. For ElevenLabs streaming, the model-aware cap follows `streaming_model_id` before falling back to `model_id`.
 
 ### Telegram Voice Bubbles & ffmpeg
 
@@ -359,7 +364,7 @@ tts:
 
 **Supported `output_format` values:** `mp3` (default), `wav`, `ogg`, `flac`, `m4a`, `aac`, `amr`, `opus`. Your command must actually produce that format (e.g. via `ffmpeg`); Hermes validates the declared value and names the output file accordingly. An explicit `output_path` with one of these suffixes wins over `output_format`; a missing or unsupported suffix uses the configured format. The effective format is exposed to the command as `{format}`.
 
-**Subprocess environment:** command providers (TTS and STT) run with Hermes secrets scrubbed from the child environment — gateway bot tokens, LLM provider API keys, and internal relay credentials are removed; `PATH`, `HOME`, locale, and other normal variables are kept. If your command template needs its own API key from the environment (e.g. a `curl` one-liner), list the variable names under `env_passthrough` in the provider config:
+**Subprocess environment:** command providers (TTS and STT) run with Hermes secrets scrubbed from the child environment — gateway bot tokens, LLM provider API keys, and internal relay credentials are removed; `PATH`, `HOME`, locale, and other normal variables are kept. If your command template needs its own API key from the environment (e.g. a `curl` one-liner), list the variable names under `env_passthrough` in the provider config. Each allowlisted value is resolved through the active profile's secret scope, so multiplexed profiles cannot pass another profile's launch-environment key:
 
 ```yaml
 tts:
@@ -512,7 +517,7 @@ tts:
       output_format: wav
 ```
 
-These four values override the corresponding global `tts.voice`, `tts.model`, `tts.speed`, and `tts.output_format` fallbacks. Missing plugin values use the global value when set and then the provider's own default.
+These four values override the corresponding global `tts.voice`, `tts.model`, `tts.speed`, and `tts.output_format` fallbacks. Missing plugin values use the global value when set and then the provider's own default. Plugin formats are limited to the `TTSProvider` ABC's `mp3`, `wav`, `ogg`, `opus`, and `flac` values; an unsupported configured value or explicit output-path suffix is rewritten to the nearest valid plugin default (`mp3`). A recognized plugin suffix takes precedence.
 
 #### Optional hooks
 

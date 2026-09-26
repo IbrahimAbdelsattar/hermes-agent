@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
+import type { OwnerScope } from '@/api/client'
 import { playSpeechText } from '@/lib/voice-playback'
 import { ownsAmbientCue } from '@/store/ambient'
 import { notifyError } from '@/store/notifications'
@@ -20,6 +21,7 @@ interface UseAutoSpeakReplies {
   failureLabel: string
   /** Mark the current last reply spoken — shared dedupe with the conversation consumer. */
   markSpoken: () => void
+  owner: OwnerScope
   /** Latest completed assistant reply, or null; `pending` true while still streaming. */
   pendingReply: () => AutoSpeakReply | null
   /** Re-arm on session switch so opening a chat never reads its existing last reply. */
@@ -37,15 +39,16 @@ export function useAutoSpeakReplies({
   conversationActive,
   failureLabel,
   markSpoken,
+  owner,
   pendingReply,
   sessionId
 }: UseAutoSpeakReplies) {
   const enabled = useStore($autoSpeakReplies)
   // Wake on THIS composer's transcript: a tile subscribed to the primary's
   // would never fire on its own replies (and would fire on someone else's).
-  const { $messages, connectionId, profile } = useComposerScope()
-  const latest = useRef({ connectionId, conversationActive, failureLabel, markSpoken, pendingReply, profile })
-  latest.current = { connectionId, conversationActive, failureLabel, markSpoken, pendingReply, profile }
+  const { $messages } = useComposerScope()
+  const latest = useRef({ conversationActive, failureLabel, markSpoken, owner, pendingReply })
+  latest.current = { conversationActive, failureLabel, markSpoken, owner, pendingReply }
 
   useEffect(() => {
     if (!enabled) {
@@ -57,7 +60,7 @@ export function useAutoSpeakReplies({
     latest.current.markSpoken()
 
     const speakLatest = () => {
-      const { connectionId, conversationActive, failureLabel, markSpoken, pendingReply, profile } = latest.current
+      const { conversationActive, failureLabel, markSpoken, owner, pendingReply } = latest.current
 
       if (conversationActive || $voicePlayback.get().status !== 'idle') {
         return
@@ -75,7 +78,7 @@ export function useAutoSpeakReplies({
       // ran in every window, so peers just stay quiet.
       void ownsAmbientCue(`speak:${reply.id}`).then(owns => {
         if (owns) {
-          void playSpeechText(reply.text, { connectionId, messageId: reply.id, profile, source: 'read-aloud' }).catch(
+          void playSpeechText(reply.text, { ...owner, messageId: reply.id, source: 'read-aloud' }).catch(
             error => notifyError(error, failureLabel)
           )
         }
@@ -87,5 +90,5 @@ export function useAutoSpeakReplies({
     const stops = [$messages.subscribe(speakLatest), $voicePlayback.listen(speakLatest)]
 
     return () => stops.forEach(f => f())
-  }, [$messages, enabled, sessionId])
+  }, [$messages, enabled, owner, sessionId])
 }

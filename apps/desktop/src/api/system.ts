@@ -207,7 +207,7 @@ export const AUDIO_TTS_LEASE_REQUEST_TIMEOUT_MS = 180_000
 /**
  * Tell the backend a speech-output toggle flipped so it can warm the TTS engine
  * (`active: true`) or release it once no surface needs it (`active: false`).
- * `lease` names the toggle — `desktop:read-aloud`, `desktop:conversation`.
+ * `lease` names the toggle and renderer, such as `desktop:read-aloud:<id>`.
  */
 export function setTtsLease(lease: string, active: boolean, owner?: OwnerScope): Promise<AudioTtsLeaseResponse> {
   return hermesApi<AudioTtsLeaseResponse>({

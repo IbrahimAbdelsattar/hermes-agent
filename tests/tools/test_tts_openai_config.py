@@ -60,6 +60,31 @@ class TestResolveOpenaiAudioClientConfig:
                 False,
             )
 
+    def test_custom_base_without_direct_credentials_never_uses_managed_route(self):
+        config = {"openai": {"base_url": "http://localhost:4003/v1"}}
+        with patch.object(tts_tool, "_load_tts_config", return_value=config), \
+             patch.object(tts_tool_openai, "read_selection", return_value=None), \
+             patch.object(tts_tool_openai, "resolve_openai_audio_api_key", return_value=""), \
+             patch.object(tts_tool_openai, "resolve_managed_tool_gateway") as gateway_mock:
+            with pytest.raises(ValueError, match="requires a direct OpenAI credential"):
+                tts_tool_openai._resolve_openai_audio_client_config()
+        gateway_mock.assert_not_called()
+
+    def test_managed_selection_rejects_custom_base_even_with_direct_key(self):
+        config = {
+            "provider": "nous",
+            "openai": {
+                "api_key": "direct-key",
+                "base_url": "http://localhost:4003/v1",
+            },
+        }
+        with patch.object(tts_tool, "_load_tts_config", return_value=config), \
+             patch.object(tts_tool_openai, "read_selection", return_value="nous"), \
+             patch.object(tts_tool_openai, "resolve_managed_tool_gateway") as gateway_mock:
+            with pytest.raises(ValueError, match="cannot use tts.openai.base_url"):
+                tts_tool_openai._resolve_openai_audio_client_config()
+        gateway_mock.assert_not_called()
+
     def test_config_without_base_url_falls_back_to_default_openai_base(self):
         config = {"openai": {"api_key": "cfg-key"}}
 
@@ -75,7 +100,7 @@ class TestResolveOpenaiAudioClientConfig:
     def test_nous_selection_overrides_config_credentials(self):
         """A stored 'nous' selection (or legacy use_gateway: true) routes
         managed even when direct credentials are present."""
-        config = {"openai": {"api_key": "cfg-key", "base_url": "http://localhost:4003/v1"}}
+        config = {"openai": {"api_key": "cfg-key"}}
         managed = SimpleNamespace(
             nous_user_token="managed-token",
             gateway_origin="https://openai-audio-gateway.nousresearch.com",

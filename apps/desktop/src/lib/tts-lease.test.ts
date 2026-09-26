@@ -74,17 +74,41 @@ describe('syncTtsLease', () => {
     ])
   })
 
-  it('coalesces a flip that reverses before its call went out — latest intent wins', async () => {
+  it('leaves the desired active state when on→off→on overtakes a deferred acquire', async () => {
+    let failAcquire: (reason: Error) => void = () => undefined
+    setTtsLease.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          failAcquire = reject
+        })
+    )
+
+    const acquire = syncTtsLease(CONVERSATION_LEASE, true)
+    await Promise.resolve()
+    const release = syncTtsLease(CONVERSATION_LEASE, false)
+    const acquireAgain = syncTtsLease(CONVERSATION_LEASE, true)
+
+    failAcquire(new Error('acquire failed'))
+    await Promise.all([acquire, release, acquireAgain])
+
+    expect(setTtsLease.mock.calls).toEqual([
+      [CONVERSATION_LEASE, true],
+      [CONVERSATION_LEASE, true]
+    ])
+  })
+
+  it('serializes a flip that reverses while the first request is in flight', async () => {
     const on = syncTtsLease(CONVERSATION_LEASE, true)
     const off = syncTtsLease(CONVERSATION_LEASE, false)
     await Promise.all([on, off])
 
-    // The acquire never had a chance to go out; only the terminal state is sent
-    // (a release of a never-held lease is a backend no-op).
-    expect(setTtsLease.mock.calls).toEqual([[CONVERSATION_LEASE, false]])
+    expect(setTtsLease.mock.calls).toEqual([
+      [CONVERSATION_LEASE, true],
+      [CONVERSATION_LEASE, false]
+    ])
   })
 
-  it('forgets the sent state on failure so the next flip retries', async () => {
+  it('retries the desired active state after a failed request', async () => {
     setTtsLease.mockImplementationOnce(async () => {
       throw new Error('backend not ready')
     })
@@ -93,6 +117,28 @@ describe('syncTtsLease', () => {
     await syncTtsLease(READ_ALOUD_LEASE, true)
 
     expect(setTtsLease).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases the old owner after a profile switch even when its acquire failed', async () => {
+    const oldOwner = { connectionId: 'gw-a', profile: 'alpha' }
+    let failAcquire: (reason: Error) => void = () => undefined
+    setTtsLease.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          failAcquire = reject
+        })
+    )
+
+    const acquiring = syncTtsLease(READ_ALOUD_LEASE, true, oldOwner)
+    await Promise.resolve()
+    failAcquire(new Error('acquire failed'))
+    await acquiring
+    await syncTtsLease(READ_ALOUD_LEASE, false, oldOwner)
+
+    expect(setTtsLease.mock.calls).toEqual([
+      [READ_ALOUD_LEASE, true, oldOwner],
+      [READ_ALOUD_LEASE, false, oldOwner]
+    ])
   })
 
   it('dedupes and releases leases per connection/profile owner', async () => {
@@ -119,8 +165,9 @@ describe('syncTtsLease', () => {
     ])
   })
 
-  it('conversation lease is per renderer, read-aloud lease is shared', () => {
+  it('gives conversation and read-aloud leases distinct renderer identities', () => {
     expect(CONVERSATION_LEASE).toMatch(/^desktop:conversation:[a-z0-9]+$/)
-    expect(READ_ALOUD_LEASE).toBe('desktop:read-aloud')
+    expect(READ_ALOUD_LEASE).toMatch(/^desktop:read-aloud:[a-z0-9]+$/)
+    expect(READ_ALOUD_LEASE).not.toBe(CONVERSATION_LEASE)
   })
 })

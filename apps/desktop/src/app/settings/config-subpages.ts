@@ -76,16 +76,7 @@ const CONFIG_SUBPAGE_DEFINITIONS: Record<string, ConfigSubpageDefinition[]> = {
         'voice.voice_chat_mode',
         'voice.record_key',
         'voice.max_recording_seconds',
-        'voice.client_direct',
-        'voice.beep_enabled',
-        'voice.beep_volume',
-        'voice.thinking_sound',
-        'voice.silence_threshold',
-        'voice.silence_duration',
-        'voice.barge_in',
-        'voice.barge_in_grace_seconds',
-        'voice.barge_in_threshold_multiplier',
-        'voice.stop_phrases'
+        'voice.client_direct'
       ],
       prefixes: ['voice.gpt_live.']
     },

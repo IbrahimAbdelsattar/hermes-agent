@@ -134,8 +134,6 @@ _TTS_API_KEY_PROVIDERS = {
                    "ElevenLabs API key saved", ""),
     "openai": (("VOICE_TOOLS_OPENAI_KEY", "OPENAI_API_KEY"), "VOICE_TOOLS_OPENAI_KEY",
                "OpenAI API key for TTS", "OpenAI TTS API key saved", ""),
-    "minimax": (("MINIMAX_API_KEY", "MINIMAX_CN_API_KEY"), "MINIMAX_API_KEY", "MiniMax API key for TTS",
-                "MiniMax TTS API key saved", ""),
     "mistral": (("MISTRAL_API_KEY",), "MISTRAL_API_KEY", "Mistral API key for TTS",
                 "Mistral TTS API key saved", ""),
     "gemini": (("GEMINI_API_KEY", "GOOGLE_API_KEY"), "GEMINI_API_KEY", "Gemini API key for TTS",
@@ -159,6 +157,35 @@ _TTS_LOCAL_PROVIDERS = {
               ("Piper is a local neural TTS engine with multilingual voices.",
                "Voice models (~20-90MB) download on first use."),
               "Install Piper now?", _install_piper_deps)}
+
+
+def _tts_minimax_step(config: dict) -> str:
+    raw_tts = config.get("tts")
+    tts_config = raw_tts if isinstance(raw_tts, dict) else {}
+    raw_minimax = tts_config.get("minimax")
+    minimax_config = dict(raw_minimax) if isinstance(raw_minimax, dict) else {}
+    current_region = str(minimax_config.get("region") or "global").strip().lower()
+    default_idx = 1 if current_region == "cn" else 0
+    region_idx = _setup.prompt_choice(
+        "Select MiniMax region:",
+        ["Global (MINIMAX_API_KEY)", "China (MINIMAX_CN_API_KEY)"],
+        default_idx,
+    )
+    region = "cn" if region_idx == 1 else "global"
+    env_var = "MINIMAX_CN_API_KEY" if region == "cn" else "MINIMAX_API_KEY"
+    if _setup.get_env_value(env_var):
+        _setup.print_success(f"MiniMax {region} TTS credentials already configured")
+    else:
+        print()
+        api_key = _setup.prompt(f"MiniMax {region} API key for TTS", password=True)
+        if not api_key:
+            _setup.print_warning("No MiniMax API key provided. Falling back to Edge TTS.")
+            return "edge"
+        _setup.save_env_value(env_var, api_key)
+        _setup.print_success(f"MiniMax {region} TTS API key saved")
+    minimax_config["region"] = region
+    config.setdefault("tts", {}).setdefault("minimax", {}).update(minimax_config)
+    return "minimax"
 
 
 def _tts_api_key_step(selected: str) -> str:
@@ -268,6 +295,8 @@ def _setup_tts_provider(config: dict):
                                  "until removed from ~/.hermes/.env.")
     elif selected in _TTS_LOCAL_PROVIDERS:
         selected = _tts_local_install_step(selected)
+    elif selected == "minimax":
+        selected = _tts_minimax_step(config)
     elif selected in _TTS_API_KEY_PROVIDERS:
         selected = _tts_api_key_step(selected)
     elif selected == "xai":

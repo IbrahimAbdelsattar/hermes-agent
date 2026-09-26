@@ -63,6 +63,39 @@ def _write_model_config(tmp_path, provider, base_url="", model_name="test-model"
     save_config(cfg)
 
 
+def test_minimax_setup_pairs_selected_region_with_matching_credential(monkeypatch):
+    from hermes_cli import setup_tts
+
+    env = {"MINIMAX_API_KEY": "global-key"}
+    saved = {}
+    monkeypatch.setattr(setup_tts._setup, "get_env_value", lambda key: env.get(key, ""))
+    monkeypatch.setattr(setup_tts._setup, "prompt_choice", lambda question, choices, default: 1)
+    monkeypatch.setattr(setup_tts._setup, "prompt", lambda *args, **kwargs: "china-key")
+    monkeypatch.setattr(setup_tts._setup, "save_env_value", lambda key, value: saved.update({key: value}))
+    monkeypatch.setattr(setup_tts._setup, "print_success", lambda message: None)
+    config = {"tts": {"minimax": {"region": "global"}}}
+
+    assert setup_tts._tts_minimax_step(config) == "minimax"
+    assert saved == {"MINIMAX_CN_API_KEY": "china-key"}
+    assert config["tts"]["minimax"]["region"] == "cn"
+
+
+def test_minimax_setup_does_not_persist_region_without_key(monkeypatch):
+    from hermes_cli import setup_tts
+
+    saved = []
+    monkeypatch.setattr(setup_tts._setup, "get_env_value", lambda key: "")
+    monkeypatch.setattr(setup_tts._setup, "prompt_choice", lambda question, choices, default: 0)
+    monkeypatch.setattr(setup_tts._setup, "prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(setup_tts._setup, "save_env_value", lambda key, value: saved.append((key, value)))
+    monkeypatch.setattr(setup_tts._setup, "print_warning", lambda message: None)
+    config = {}
+
+    assert setup_tts._tts_minimax_step(config) == "edge"
+    assert saved == []
+    assert config == {}
+
+
 def test_setup_delegates_to_select_provider_and_model(tmp_path, monkeypatch):
     """setup_model_provider calls select_provider_and_model and syncs config."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))

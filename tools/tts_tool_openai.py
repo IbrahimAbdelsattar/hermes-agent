@@ -40,27 +40,35 @@ def _managed_openai_audio_route() -> Optional[tuple]:
 
 def _resolve_openai_audio_client_config() -> tuple[str, str, bool]:
     """``(api_key, base_url, is_managed)`` for the OpenAI audio client (``is_managed`` = the restricted
-    Nous proxy, so callers coerce the request). Strict on the stored ``tts`` selection: ``"nous"``
-    → managed ONLY (error if unavailable); any other → direct credentials ONLY (``tts.openai.api_key``
-    then ``VOICE_TOOLS_OPENAI_KEY``/``OPENAI_API_KEY``); unset → config key → env key → managed."""
+    Nous proxy, so callers coerce the request). A configured custom endpoint requires direct
+    credentials; managed Nous credentials are never redirected to it."""
     origin = _origin()
     openai_cfg = _section(origin._load_tts_config(), "openai")
     selected = read_selection("tts")
+    config_base_url = str(openai_cfg.get("base_url") or "").strip()
+    direct_api_key = str(openai_cfg.get("api_key") or "").strip() or resolve_openai_audio_api_key()
     if selected == NOUS_MANAGED_PROVIDER:
+        if config_base_url:
+            raise ValueError(
+                "tts.provider: nous cannot use tts.openai.base_url; select OpenAI directly and "
+                "configure a direct OpenAI credential for the custom endpoint")
         route = _managed_openai_audio_route()
         if route is None:
             raise ValueError(selection_error(
                 "tts", NOUS_MANAGED_PROVIDER,
                 "the Nous Tool Gateway is not available (not entitled or unreachable)"))
         return route
-    direct_api_key = openai_cfg.get("api_key") or resolve_openai_audio_api_key()
     if direct_api_key:
-        return direct_api_key, openai_cfg.get("base_url") or DEFAULT_OPENAI_BASE_URL, False
+        return direct_api_key, config_base_url or DEFAULT_OPENAI_BASE_URL, False
     if selected is not None:
         raise ValueError(selection_error(
             "tts", selected,
             "neither tts.openai.api_key in config nor VOICE_TOOLS_OPENAI_KEY/OPENAI_API_KEY is set",
         ))
+    if config_base_url:
+        raise ValueError(
+            "tts.openai.base_url requires a direct OpenAI credential; managed Nous credentials "
+            "cannot be sent to a custom endpoint")
     route = _managed_openai_audio_route()
     if route is None:
         message = "Neither tts.openai.api_key in config nor VOICE_TOOLS_OPENAI_KEY/OPENAI_API_KEY is set"
@@ -113,8 +121,8 @@ def _generate_openai_tts(
     if voice is None:
         voice = oai_config.get("voice", DEFAULT_OPENAI_VOICE)
     config_base_url = oai_config.get("base_url")
-    if base_url is None:  # config override beats the auth-chain fallback; explicit arg wins
-        base_url = config_base_url or fallback_base or DEFAULT_OPENAI_BASE_URL
+    if base_url is None:
+        base_url = fallback_base or config_base_url or DEFAULT_OPENAI_BASE_URL
     if speed is None:
         speed = _provider_speed(tts_config, "openai")
     if instructions is None:

@@ -193,7 +193,6 @@ def _resolve_tts_client_config() -> Dict[str, Any]:
         oai = _section(tts_config, "openai")
         model = oai.get("model") or tts_tool_openai.DEFAULT_OPENAI_MODEL
         config_base = oai.get("base_url")
-        base_url = config_base or base_url
         # The managed gateway only proxies MANAGED_OPENAI_TTS_MODELS — same
         # coercion text_to_speech applies server-side.
         if is_managed and not config_base and model not in tts_tool_openai.MANAGED_OPENAI_TTS_MODELS:

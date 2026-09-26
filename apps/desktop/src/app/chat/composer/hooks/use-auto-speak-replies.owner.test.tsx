@@ -14,11 +14,12 @@ import { useAutoSpeakReplies } from './use-auto-speak-replies'
 vi.mock('@/store/ambient', () => ({ ownsAmbientCue: async () => true }))
 vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
 
-// A Bot chat is owned by (its connection, its profile). The production path —
-// the auto-speak hook reading its composer scope, through playSpeechText's
-// ladder, down to the REST audio calls — must carry that owner, or the Bot
-// speaks with the active profile's voice on the active gateway (#100864).
+// A Bot chat is owned by (its connection, its profile). Auto-speak must carry
+// that concrete owner through playSpeechText's REST ladder, or the Bot speaks
+// with the active profile's voice on the active gateway (#100864).
 describe('useAutoSpeakReplies — owner-routed synthesis', () => {
+  const owner = { connectionId: 'gw-bots', profile: 'bot-adam' }
+
   afterEach(() => {
     cleanup()
     $autoSpeakReplies.set(false)
@@ -57,6 +58,7 @@ describe('useAutoSpeakReplies — owner-routed synthesis', () => {
           markSpoken: () => {
             reply = null
           },
+          owner,
           pendingReply: () => reply,
           sessionId: 'bot-session'
         }),

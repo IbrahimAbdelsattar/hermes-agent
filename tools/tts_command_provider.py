@@ -140,10 +140,11 @@ def run_command_provider(
     provider survives, a silently stalled one is killed. Child env is scrubbed of Hermes secrets
     while propagating delegated-child lineage markers."""
     from agent.delegation_context import delegated_child_subprocess_env
+    from agent.secret_scope import get_secret
     from tools.environments.local import hermes_subprocess_env
     scrubbed = hermes_subprocess_env(inherit_credentials=False)
     for key in env_passthrough or []:
-        value = os.environ.get(key)
+        value = get_secret(key)
         if value is not None:
             scrubbed[key] = value
     # Own process group so the whole tree can be signalled on idle timeout. Lossy UTF-8 decode:
@@ -334,11 +335,19 @@ def _generate_command_tts(
         text_path = Path(tmpdir) / "input.txt"
         text_path.write_text(text, encoding="utf-8")
         default_output_format = tts_config.get("output_format") or DEFAULT_COMMAND_TTS_OUTPUT_FORMAT
+        from tools.tts_tool_delivery import _provider_speed
+        speed_config = tts_config
+        if "speed" in config:
+            speed_config = dict(tts_config if isinstance(tts_config, dict) else {})
+            providers = speed_config.get("providers")
+            providers = dict(providers) if isinstance(providers, dict) else {}
+            providers[provider_name] = config
+            speed_config["providers"] = providers
         placeholders = {
             "input_path": str(text_path), "text_path": str(text_path), "output_path": str(output),
             "format": _get_command_tts_output_format(config, str(output), default_output_format),
             "voice": str(config.get("voice", "")), "model": str(config.get("model", "")),
-            "speed": str(config.get("speed", tts_config.get("speed", ""))),
+            "speed": str(_provider_speed(speed_config, provider_name)),
         }
         command = render_command_template(command_template, placeholders)
         try:

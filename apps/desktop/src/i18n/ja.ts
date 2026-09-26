@@ -753,16 +753,7 @@ export const ja = defineLocale({
         recordKey: '音声ショートカット',
         maxRecordingSeconds: '最大録音時間',
         autoTts: 'バックエンド自動 TTS',
-        clientDirect: 'プロバイダー直接呼び出し',
-        beepEnabled: '録音ビープ',
-        beepVolume: '録音ビープ音量',
-        thinkingSound: '思考中サウンド',
-        silenceThreshold: '録音の無音しきい値',
-        silenceDuration: '録音の無音時間',
-        bargeIn: '割り込み',
-        bargeInGraceSeconds: '割り込み待機時間',
-        bargeInThresholdMultiplier: '割り込みしきい値倍率',
-        stopPhrases: '音声停止フレーズ'
+        clientDirect: 'プロバイダー直接呼び出し'
       },
       stt: {
         enabled: '音声認識',
